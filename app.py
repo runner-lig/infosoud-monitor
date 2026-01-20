@@ -44,10 +44,17 @@ except KeyError as e:
 SOUDY_MAPA = {
     "NS": "Nejvyšší soud", "NSJIMBM": "Nejvyšší soud", "NSS": "Nejvyšší správní soud",
     "VSPHAAB": "Vrchní soud v Praze", "VSOL": "Vrchní soud v Olomouci",
-    "MSPHAAB": "Městský soud v Praze", "OSPH01": "Obvodní soud pro Prahu 1", "OSPH02": "Obvodní soud pro Prahu 2",
-    "OSPHA03": "Obvodní soud pro Prahu 3", "OSPH04": "Obvodní soud pro Prahu 4", "OSPH05": "Obvodní soud pro Prahu 5",
-    "OSPHA06": "Obvodní soud pro Prahu 6", "OSPH07": "Obvodní soud pro Prahu 7", "OSPH08": "Obvodní soud pro Prahu 8",
-    "OSPHA09": "Obvodní soud pro Prahu 9", "OSPH10": "Obvodní soud pro Prahu 10",
+    "MSPHAAB": "Městský soud v Praze", 
+    "OSPHA01": "Obvodní soud pro Prahu 1",
+    "OSPHA02": "Obvodní soud pro Prahu 2",
+    "OSPHA03": "Obvodní soud pro Prahu 3",
+    "OSPHA04": "Obvodní soud pro Prahu 4",
+    "OSPHA05": "Obvodní soud pro Prahu 5",
+    "OSPHA06": "Obvodní soud pro Prahu 6",
+    "OSPHA07": "Obvodní soud pro Prahu 7",
+    "OSPHA08": "Obvodní soud pro Prahu 8",
+    "OSPHA09": "Obvodní soud pro Prahu 9",
+    "OSPHA10": "Obvodní soud pro Prahu 10",
     "KSSTCAB": "Krajský soud v Praze", "OSBN": "Okresní soud v Benešově", "OSBE": "Okresní soud v Berouně",
     "OSKL": "Okresní soud v Kladně", "OSKO": "Okresní soud v Kolíně", "OSKH": "Okresní soud v Kutné Hoře",
     "OSME": "Okresní soud v Mělníku", "OSMB": "Okresní soud v Mladé Boleslavi", "OSNB": "Okresní soud v Nymburce",
@@ -79,6 +86,7 @@ SOUDY_MAPA = {
     "OSOL": "Okresní soud v Olomouci", "OSOP": "Okresní soud v Opavě", "OSOS": "Okresní soud v Ostravě",
     "OSPR": "Okresní soud v Přerově", "OSSU": "Okresní soud v Šumperku", "OSVS": "Okresní soud ve Vsetíně"
 }
+
 
 # -------------------------------------------------------------------------
 # 1. DATABÁZE (PostgreSQL / Supabase)
