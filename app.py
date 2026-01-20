@@ -495,88 +495,90 @@ if selected_page == "👥 Správa uživatelů":
 # -------------------------------------------------------------------------
 elif selected_page == "📊 Přehled kauz":
     
+    # --- 1. FUNKCE PRO NAČÍTÁNÍ DAT S PAMĚTÍ (Cache) ---
+    # Toto zrychluje aplikaci. Data se stahují jen jednou za 5 minut, 
+    # nebo když je vynutíme smazáním cache.
+    @st.cache_data(ttl=300)
+    def get_pripady_data():
+        conn = get_connection()
+        df_result = pd.read_sql_query("SELECT * FROM pripady ORDER BY posledni_kontrola DESC", conn)
+        conn.close()
+        return df_result
+
+    # --- 2. SIDEBAR (PŘIDÁVÁNÍ A OVLÁDÁNÍ) ---
     with st.sidebar:
         st.header("➕ Přidat nový spis")
         
-        # --- FUNKCE PRO BEZPEČNÉ PŘIDÁNÍ A VYMAZÁNÍ (CALLBACK) ---
+        # Funkce, která se spustí HNED po kliknutí na "Sledovat případ"
         def zpracuj_pridani():
-            # Načteme hodnoty přímo ze stavu (session_state)
             url = st.session_state.input_url
             nazev = st.session_state.input_nazev
             
-            # Pokusíme se přidat případ
             ok, msg = pridej_pripad(url, nazev)
             
             if ok:
-                # Uložíme si zprávu o úspěchu, aby se zobrazila po restartu
                 st.session_state['vysledek_akce'] = ("success", msg)
-                # Tady můžeme bezpečně vymazat políčka (protože jsme v callbacku)
+                # Vymazání políček
                 st.session_state.input_url = ""
                 st.session_state.input_nazev = ""
+                # Vynucení načtení nových dat z databáze
+                st.cache_data.clear()
             else:
-                # Uložíme chybu
                 st.session_state['vysledek_akce'] = ("error", msg)
 
-        # --- VSTUPNÍ POLE ---
+        # Vstupní pole
         st.text_input("Název kauzy", key="input_nazev")
         st.text_input("URL z Infosoudu", key="input_url")
         
-        # Tlačítko teď volá funkci 'zpracuj_pridani'
+        # Tlačítko (volá funkci zpracuj_pridani)
         st.button("Sledovat případ", on_click=zpracuj_pridani)
         
-        # Zobrazení zprávy (úspěch/chyba) z session_state
+        # Zobrazení hlášky o úspěchu/chybě
         if 'vysledek_akce' in st.session_state:
             typ, text = st.session_state['vysledek_akce']
-            if typ == 'success':
-                st.success(text)
-            else:
-                st.error(text)
-            # Po zobrazení zprávu smažeme, aby tam nestrašila věčně
+            if typ == 'success': st.success(text)
+            else: st.error(text)
             del st.session_state['vysledek_akce']
         
         st.divider()
+        
+        # Tlačítko Ruční kontrola
         if st.button("🔄 Ruční kontrola"):
-            with st.spinner("Probíhá kontrola (může trvat déle kvůli ochraně proti bloku)..."): 
+            with st.spinner("Probíhá kontrola..."): 
                 monitor_job()
+            st.cache_data.clear() # Smažeme cache, aby se změny projevily
             st.success("Hotovo"); time.sleep(1); st.rerun()
             
         st.divider()
+        
+        # Tlačítko Simulace
         if st.button("🧪 SIMULACE ZMĚNY + E-MAIL"):
              conn = get_connection()
              try:
                  df_test = pd.read_sql_query("SELECT * FROM pripady ORDER BY id ASC LIMIT 2", conn)
                  if not df_test.empty:
                      c = conn.cursor()
-                     # Postgres syntaxe pro IN klauzuli
                      ids = tuple(df_test['id'].tolist())
                      if len(ids) == 1: ids = f"({ids[0]})"
-                     
                      c.execute(f"UPDATE pripady SET ma_zmenu=TRUE WHERE id IN {ids}")
                      conn.commit()
                      c.close()
-                     st.toast("Odesílám notifikace všem uživatelům...")
+                     st.toast("Odesílám notifikace...")
                      log_do_historie("Simulace", "Spuštěna simulace změny")
                      for i, row in df_test.iterrows():
                          try: p=json.loads(row['params_json']); znacka=f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
                          except: znacka="Test"
                          odeslat_email_notifikaci(row['oznaceni'], "🔔 TESTOVACÍ SIMULACE ZMĚNY", znacka)
+                     
+                     st.cache_data.clear() # Smažeme cache
                      st.success("Hotovo."); time.sleep(2); st.rerun()
                  else: st.warning("Žádné spisy.")
              finally:
                  conn.close()
 
-# --- OPTIMALIZOVANÉ NAČÍTÁNÍ DAT (CACHING) ---
-    # Tato funkce se spustí jen jednou, pak si Streamlit pamatuje výsledek.
-    # Znovu se spustí jen tehdy, když zavoláme st.cache_data.clear() (např. po přidání spisu).
-    @st.cache_data(ttl=300) # (Volitelně: automaticky obnovit po 5 minutách)
-    def get_pripady_data():
-        conn = get_connection()
-        # Zde stahujeme data
-        df_result = pd.read_sql_query("SELECT * FROM pripady ORDER BY posledni_kontrola DESC", conn)
-        conn.close()
-        return df_result
-
-    # Tady voláme tu chytrou funkci místo přímého dotazu do DB
+    # --- 3. HLAVNÍ VÝPIS KAUZ ---
+    
+    # Načteme data (buď z rychlé cache, nebo z databáze, pokud byla smazána cache)
     df = get_pripady_data()
     
     if df.empty:
@@ -585,6 +587,16 @@ elif selected_page == "📊 Přehled kauz":
         df_zmeny = df[df['ma_zmenu'] == True]
         df_ostatni = df[df['ma_zmenu'] == False]
 
+        # Pomocné funkce pro tlačítka v řádcích (aby se hned aktualizovala stránka)
+        def akce_videl_jsem(id_spisu):
+            resetuj_upozorneni(id_spisu)
+            st.cache_data.clear() # Důležité: Přinutí aplikaci načíst data znovu
+
+        def akce_smazat(id_spisu):
+            smaz_pripad(id_spisu)
+            st.cache_data.clear()
+
+        # --- A) ČERVENÁ SEKCE (ZMĚNY) ---
         if not df_zmeny.empty:
             st.subheader("🚨 Případy se změnou ve spise")
             for index, row in df_zmeny.iterrows():
@@ -595,7 +607,7 @@ elif selected_page == "📊 Přehled kauz":
                     nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
                     formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
                 except:
-                    spisova_znacka = "Neznámá značka"; nazev_soudu = "Neznámý soud"; formatted_time = str(row['posledni_kontrola'])
+                    spisova_znacka = "?"; nazev_soudu = "?"; formatted_time = ""
 
                 with st.container(border=True):
                     c1, c2, c3, c4 = st.columns([2, 3, 4, 1])
@@ -610,11 +622,12 @@ elif selected_page == "📊 Přehled kauz":
                         st.caption(f"Kontrolováno: {formatted_time}")
                     with c4:
                         st.link_button("Otevřít", row['url'])
-                        if st.button("👁️ Viděl jsem", key=f"seen_{row['id']}"):
-                            resetuj_upozorneni(row['id']); st.rerun()
-                        if st.button("🗑️", key=f"del_{row['id']}", help="Smazat"):
-                            smaz_pripad(row['id']); st.rerun()
+                        
+                        # Tlačítka s Callbacky
+                        st.button("👁️ Viděl jsem", key=f"seen_{row['id']}", on_click=akce_videl_jsem, args=(row['id'],))
+                        st.button("🗑️", key=f"del_{row['id']}", help="Smazat", on_click=akce_smazat, args=(row['id'],))
 
+        # --- B) ZELENÁ SEKCE (BEZ ZMĚN) ---
         if not df_ostatni.empty:
             if not df_zmeny.empty: st.markdown("---") 
             st.subheader("✅ Případy beze změn")
@@ -626,7 +639,7 @@ elif selected_page == "📊 Přehled kauz":
                     nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
                     formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
                 except:
-                    spisova_znacka = "Neznámá značka"; nazev_soudu = "Neznámý soud"; formatted_time = str(row['posledni_kontrola'])
+                    spisova_znacka = "?"; nazev_soudu = "?"; formatted_time = ""
 
                 with st.container(border=True):
                     c1, c2, c3, c4 = st.columns([2, 3, 4, 1])
@@ -641,8 +654,7 @@ elif selected_page == "📊 Přehled kauz":
                         st.caption(f"Kontrolováno: {formatted_time}")
                     with c4:
                         st.link_button("Otevřít", row['url'])
-                        if st.button("🗑️", key=f"del_{row['id']}", help="Smazat"):
-                            smaz_pripad(row['id']); st.rerun()
+                        st.button("🗑️", key=f"del_{row['id']}", help="Smazat", on_click=akce_smazat, args=(row['id'],))
 # -------------------------------------------------------------------------
 # STRÁNKA: AUDITNÍ HISTORIE
 # -------------------------------------------------------------------------
