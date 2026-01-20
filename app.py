@@ -344,7 +344,7 @@ def start_scheduler():
     scheduler.start()
     return scheduler
 
-def monitor_job():
+def monitor_job(status_placeholder=None, progress_bar=None):
     # Vytvoříme nové spojení pro vlákno
     try:
         conn = get_connection()
@@ -355,14 +355,22 @@ def monitor_job():
         print(f"Chyba připojení scheduleru: {e}")
         return
 
-    print(f"--- KONTROLA ({datetime.datetime.now()}) - Počet spisů: {len(rows)} ---")
+    celkem = len(rows)
+    print(f"--- KONTROLA ({datetime.datetime.now()}) - Počet spisů: {celkem} ---")
     
-    for row in rows:
+    for i, row in enumerate(rows):
+        # --- AKTUALIZACE PRŮBĚHU (NOVÉ) ---
+        if status_placeholder and progress_bar:
+            aktualni_cislo = i + 1
+            procenta = int((aktualni_cislo / celkem) * 100)
+            status_placeholder.write(f"⏳ Kontroluji spis **{aktualni_cislo} / {celkem}**: _{row[3]}_")
+            progress_bar.progress(procenta)
+        # ----------------------------------
+
         cid, params_str, old_cnt, name = row
         p = json.loads(params_str)
         
-        # 1. Zpomalovač proti zablokování (Rate Limiting)
-        # Náhodná pauza 1 až 3 sekundy mezi každým dotazem
+        # 1. Zpomalovač proti zablokování
         time.sleep(random.uniform(1, 3))
         
         new_data = stahni_data_z_infosoudu(p)
@@ -376,20 +384,17 @@ def monitor_job():
                           (len(new_data), new_data[-1], True, now, cid))
                 conn.commit()
                 
-                # Zápis do historie
                 try:
-                    # Musíme udělat malý trik pro logování bez session state
                     c.execute("INSERT INTO historie (datum, uzivatel, akce, popis) VALUES (%s, %s, %s, %s)",
                               (now, "🤖 Systém (Robot)", "Nová událost", f"Změna u {name}"))
                     conn.commit()
                 except: pass
                 
-                # Odeslání mailu
                 spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
                 odeslat_email_notifikaci(name, new_data[-1], spis_zn)
                 
             else:
-                # Beze změny, jen aktualizujeme čas
+                # Beze změny
                 c.execute("UPDATE pripady SET posledni_kontrola=%s WHERE id=%s", (now, cid))
                 conn.commit()
     
