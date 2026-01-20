@@ -497,23 +497,41 @@ elif selected_page == "📊 Přehled kauz":
     with st.sidebar:
         st.header("➕ Přidat nový spis")
         
-        # 1. Změna: Přidali jsme parametr key="...", abychom mohli pole ovládat
-        nav_nazev = st.text_input("Název kauzy", key="input_nazev")
-        nav_url = st.text_input("URL z Infosoudu", key="input_url")
+        # --- FUNKCE PRO BEZPEČNÉ PŘIDÁNÍ A VYMAZÁNÍ (CALLBACK) ---
+        def zpracuj_pridani():
+            # Načteme hodnoty přímo ze stavu (session_state)
+            url = st.session_state.input_url
+            nazev = st.session_state.input_nazev
+            
+            # Pokusíme se přidat případ
+            ok, msg = pridej_pripad(url, nazev)
+            
+            if ok:
+                # Uložíme si zprávu o úspěchu, aby se zobrazila po restartu
+                st.session_state['vysledek_akce'] = ("success", msg)
+                # Tady můžeme bezpečně vymazat políčka (protože jsme v callbacku)
+                st.session_state.input_url = ""
+                st.session_state.input_nazev = ""
+            else:
+                # Uložíme chybu
+                st.session_state['vysledek_akce'] = ("error", msg)
+
+        # --- VSTUPNÍ POLE ---
+        st.text_input("Název kauzy", key="input_nazev")
+        st.text_input("URL z Infosoudu", key="input_url")
         
-        if st.button("Sledovat případ"):
-            ok, msg = pridej_pripad(nav_url, nav_nazev)
-            if ok: 
-                st.success(msg)
-                
-                # 2. Změna: Tady vymažeme obsah políček před restartem
-                st.session_state["input_nazev"] = ""
-                st.session_state["input_url"] = ""
-                
-                time.sleep(1)
-                st.rerun()
-            else: 
-                st.error(msg)
+        # Tlačítko teď volá funkci 'zpracuj_pridani'
+        st.button("Sledovat případ", on_click=zpracuj_pridani)
+        
+        # Zobrazení zprávy (úspěch/chyba) z session_state
+        if 'vysledek_akce' in st.session_state:
+            typ, text = st.session_state['vysledek_akce']
+            if typ == 'success':
+                st.success(text)
+            else:
+                st.error(text)
+            # Po zobrazení zprávu smažeme, aby tam nestrašila věčně
+            del st.session_state['vysledek_akce']
         
         st.divider()
         if st.button("🔄 Ruční kontrola"):
@@ -528,6 +546,7 @@ elif selected_page == "📊 Přehled kauz":
                  df_test = pd.read_sql_query("SELECT * FROM pripady ORDER BY id ASC LIMIT 2", conn)
                  if not df_test.empty:
                      c = conn.cursor()
+                     # Postgres syntaxe pro IN klauzuli
                      ids = tuple(df_test['id'].tolist())
                      if len(ids) == 1: ids = f"({ids[0]})"
                      
