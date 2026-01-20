@@ -547,12 +547,23 @@ elif selected_page == "📊 Přehled kauz":
         
         st.divider()
         
-        # Tlačítko Ruční kontrola
+        # Tlačítko Ruční kontrola s Průběhem
         if st.button("🔄 Ruční kontrola"):
-            with st.spinner("Probíhá kontrola..."): 
-                monitor_job()
-            st.cache_data.clear() # Smažeme cache, aby se změny projevily
-            st.success("Hotovo"); time.sleep(1); st.rerun()
+            st.write("---") # Oddělovač
+            
+            # Vytvoříme prázdné místo pro text a pro progress bar
+            status_text = st.empty()
+            my_bar = st.progress(0)
+            
+            # Spustíme kontrolu a pošleme jí ty "škatulky" na aktualizaci
+            monitor_job(status_placeholder=status_text, progress_bar=my_bar)
+            
+            # Po dokončení vyčistíme
+            st.cache_data.clear() 
+            status_text.success("✅ Hotovo! Vše zkontrolováno.")
+            my_bar.progress(100)
+            time.sleep(2)
+            st.rerun()
             
         st.divider()
         
