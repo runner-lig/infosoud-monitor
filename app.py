@@ -103,6 +103,7 @@ def check_hash(password, hashed_text):
         return True
     return False
 
+@st.cache_resource
 def init_db():
     """Inicializace tabulek v PostgreSQL."""
     conn = get_connection()
@@ -564,9 +565,19 @@ elif selected_page == "📊 Přehled kauz":
              finally:
                  conn.close()
 
-    conn = get_connection()
-    df = pd.read_sql_query("SELECT * FROM pripady ORDER BY posledni_kontrola DESC", conn)
-    conn.close()
+# --- OPTIMALIZOVANÉ NAČÍTÁNÍ DAT (CACHING) ---
+    # Tato funkce se spustí jen jednou, pak si Streamlit pamatuje výsledek.
+    # Znovu se spustí jen tehdy, když zavoláme st.cache_data.clear() (např. po přidání spisu).
+    @st.cache_data(ttl=300) # (Volitelně: automaticky obnovit po 5 minutách)
+    def get_pripady_data():
+        conn = get_connection()
+        # Zde stahujeme data
+        df_result = pd.read_sql_query("SELECT * FROM pripady ORDER BY posledni_kontrola DESC", conn)
+        conn.close()
+        return df_result
+
+    # Tady voláme tu chytrou funkci místo přímého dotazu do DB
+    df = get_pripady_data()
     
     if df.empty:
         st.info("Zatím nesledujete žádné spisy. Přidejte první vlevo.")
