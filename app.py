@@ -275,25 +275,66 @@ def parsuj_url(url):
                 "cislo": p.get('bcVec',[p.get('cislo',[None])[0]])[0], "rocnik": p.get('rocnik',[None])[0]}
     except: return None
 
+# --- PŘIDAT TENTO SEZNAM NAD FUNKCI NEBO DO NI ---
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0"
+]
+
 def stahni_data_z_infosoudu(params):
     url = "https://infosoud.justice.cz/InfoSoud/public/search.do"
-    req = {
+    
+    # Parametry pro Infosoud
+    req_params = {
         'type': 'spzn', 'typSoudu': params['typ'], 'krajOrg': 'VSECHNY_KRAJE',
         'org': params['soud'], 'cisloSenatu': params['senat'], 'druhVec': params['druh'],
         'bcVec': params['cislo'], 'rocnik': params['rocnik'], 'spamQuestion': '23', 'agendaNc': 'CIVIL'
     }
+    
+    # --- MASKOVÁNÍ (Simulace prohlížeče) ---
+    # Vybereme náhodný prohlížeč
+    agent = random.choice(USER_AGENTS)
+    
+    # Nastavíme hlavičky tak, jak je posílá opravdový Chrome/Firefox
+    headers = {
+        "User-Agent": agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "cs,en-US;q=0.7,en;q=0.3",
+        "Referer": "https://infosoud.justice.cz/InfoSoud/public/search.do",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    }
+    
     try:
-        r = requests.get(url, params=req, timeout=10)
+        # Použijeme headers v dotazu
+        r = requests.get(url, params=req_params, headers=headers, timeout=10)
+        
+        # Kontrola, zda nás nepřesměrovali na Captchu (ochranu)
+        if "recaptcha" in r.text.lower() or "spam" in r.text.lower():
+            print("⚠️ POZOR: Infosoud vrátil podezření na robota (Captcha).")
+            return None
+
         soup = BeautifulSoup(r.text, 'html.parser')
-        if "Řízení nebylo nalezeno" in soup.text: return None
+        
+        if "Řízení nebylo nalezeno" in soup.text: 
+            return None
+            
         udalosti = []
         for row in soup.find_all('tr'):
             cols = row.find_all('td')
+            # Hledáme řádky, kde druhý sloupec je datum (DD.MM.RRRR)
             if len(cols) >= 2 and re.match(r'^\d{2}\.\d{2}\.\d{4}$', cols[1].get_text(strip=True)):
                 text = cols[0].find('a').get_text(strip=True) if cols[0].find('a') else cols[0].get_text(strip=True)
-                udalosti.append(f"{cols[1].get_text(strip=True)} - {text}")
+                datum = cols[1].get_text(strip=True)
+                udalosti.append(f"{datum} - {text}")
         return udalosti
-    except: return None
+        
+    except Exception as e:
+        print(f"Chyba při stahování: {e}")
+        return None
 
 def pridej_pripad(url, oznaceni):
     p = parsuj_url(url)
@@ -371,7 +412,7 @@ def monitor_job(status_placeholder=None, progress_bar=None):
         p = json.loads(params_str)
         
         # 1. Zpomalovač proti zablokování
-        time.sleep(random.uniform(1, 3))
+        time.sleep(random.uniform(0.1, 0.8))
         
         new_data = stahni_data_z_infosoudu(p)
         
