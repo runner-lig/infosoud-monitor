@@ -87,7 +87,6 @@ SOUDY_MAPA = {
     "OSPR": "Okresní soud v Přerově", "OSSU": "Okresní soud v Šumperku", "OSVS": "Okresní soud ve Vsetíně"
 }
 
-
 # -------------------------------------------------------------------------
 # 1. DATABÁZE (PostgreSQL / Supabase)
 # -------------------------------------------------------------------------
@@ -497,12 +496,24 @@ elif selected_page == "📊 Přehled kauz":
     
     with st.sidebar:
         st.header("➕ Přidat nový spis")
-        nav_nazev = st.text_input("Název kauzy")
-        nav_url = st.text_input("URL z Infosoudu")
+        
+        # 1. Změna: Přidali jsme parametr key="...", abychom mohli pole ovládat
+        nav_nazev = st.text_input("Název kauzy", key="input_nazev")
+        nav_url = st.text_input("URL z Infosoudu", key="input_url")
+        
         if st.button("Sledovat případ"):
             ok, msg = pridej_pripad(nav_url, nav_nazev)
-            if ok: st.success(msg); time.sleep(1); st.rerun()
-            else: st.error(msg)
+            if ok: 
+                st.success(msg)
+                
+                # 2. Změna: Tady vymažeme obsah políček před restartem
+                st.session_state["input_nazev"] = ""
+                st.session_state["input_url"] = ""
+                
+                time.sleep(1)
+                st.rerun()
+            else: 
+                st.error(msg)
         
         st.divider()
         if st.button("🔄 Ruční kontrola"):
@@ -517,7 +528,6 @@ elif selected_page == "📊 Přehled kauz":
                  df_test = pd.read_sql_query("SELECT * FROM pripady ORDER BY id ASC LIMIT 2", conn)
                  if not df_test.empty:
                      c = conn.cursor()
-                     # Postgres syntaxe pro IN klauzuli
                      ids = tuple(df_test['id'].tolist())
                      if len(ids) == 1: ids = f"({ids[0]})"
                      
@@ -603,7 +613,6 @@ elif selected_page == "📊 Přehled kauz":
                         st.link_button("Otevřít", row['url'])
                         if st.button("🗑️", key=f"del_{row['id']}", help="Smazat"):
                             smaz_pripad(row['id']); st.rerun()
-
 # -------------------------------------------------------------------------
 # STRÁNKA: AUDITNÍ HISTORIE
 # -------------------------------------------------------------------------
