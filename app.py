@@ -670,7 +670,7 @@ elif selected_page == "📊 Přehled kauz":
                     c1, c2, c3, c4 = st.columns([2, 3, 4, 1])
                     with c1:
                         st.markdown(f"### {row['oznaceni']}")
-                        st.error("🚨 **NOVÁ UDÁLOST**", icon="🚨") 
+                        st.error("🚨 **NOVÁ UDÁLOST**") 
                     with c2:
                         st.markdown(f"📂 **{spisova_znacka}**")
                         st.markdown(f"🏛️ {nazev_soudu}")
