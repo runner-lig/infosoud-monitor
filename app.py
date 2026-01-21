@@ -722,7 +722,7 @@ elif selected_page == "📊 Přehled kauz":
                         
                         # NOVÉ: Tlačítko EDITOVAT (vyskakovací okénko)
                         with st.popover("✏️", help="Upravit název"):
-                            novy_nazev = st.text_input("Nový název", value=row['oznaceni'], key=f"edit_green_{row['id']}")
+                            novy_nazev = st.text_input("Název kauzy", value=row['oznaceni'], key=f"edit_green_{row['id']}")
                             if st.button("Uložit", key=f"save_green_{row['id']}"):
                                 prejmenuj_pripad(row['id'], novy_nazev)
                                 st.cache_data.clear()
