@@ -385,6 +385,14 @@ def resetuj_vsechna_upozorneni():
     conn.close()
     log_do_historie("Hromadné potvrzení", "Uživatel označil všechny změny jako viděné.")
 
+def prejmenuj_pripad(cid, novy_nazev):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE pripady SET oznaceni = %s WHERE id = %s", (novy_nazev, cid))
+    conn.commit()
+    conn.close()
+    log_do_historie("Přejmenování", f"Spis ID {cid} přejmenován na '{novy_nazev}'")
+
 # --- SCHEDULER (POZADÍ) ---
 @st.cache_resource
 def start_scheduler():
@@ -550,7 +558,7 @@ if selected_page == "👥 Správa uživatelů":
 # -------------------------------------------------------------------------
 elif selected_page == "📊 Přehled kauz":
     
-    # --- 1. FUNKCE PRO NAČÍTÁNÍ DAT S PAMĚTÍ (Cache) ---
+    # --- 1. FUNKCE PRO NAČÍTÁNÍ DAT S PAMĚTÍ ---
     @st.cache_data(ttl=300)
     def get_pripady_data():
         conn = get_connection()
@@ -558,7 +566,7 @@ elif selected_page == "📊 Přehled kauz":
         conn.close()
         return df_result
 
-    # --- 2. SIDEBAR (PŘIDÁVÁNÍ A OVLÁDÁNÍ) ---
+    # --- 2. SIDEBAR ---
     with st.sidebar:
         st.header("➕ Přidat nový spis")
         
@@ -566,7 +574,6 @@ elif selected_page == "📊 Přehled kauz":
             url = st.session_state.input_url
             nazev = st.session_state.input_nazev
             ok, msg = pridej_pripad(url, nazev)
-            
             if ok:
                 st.session_state['vysledek_akce'] = ("success", msg)
                 st.session_state.input_url = ""
@@ -586,7 +593,6 @@ elif selected_page == "📊 Přehled kauz":
             del st.session_state['vysledek_akce']
         
         st.divider()
-        
         if st.button("🔄 Ruční kontrola"):
             st.write("---")
             status_text = st.empty()
@@ -599,7 +605,6 @@ elif selected_page == "📊 Přehled kauz":
             st.rerun()
             
         st.divider()
-        
         if st.button("🧪 SIMULACE ZMĚNY + E-MAIL"):
              conn = get_connection()
              try:
@@ -617,7 +622,6 @@ elif selected_page == "📊 Přehled kauz":
                          try: p=json.loads(row['params_json']); znacka=f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
                          except: znacka="Test"
                          odeslat_email_notifikaci(row['oznaceni'], "🔔 TESTOVACÍ SIMULACE ZMĚNY", znacka)
-                     
                      st.cache_data.clear()
                      st.success("Hotovo."); time.sleep(2); st.rerun()
                  else: st.warning("Žádné spisy.")
@@ -625,7 +629,6 @@ elif selected_page == "📊 Přehled kauz":
                  conn.close()
 
     # --- 3. HLAVNÍ VÝPIS KAUZ ---
-    
     df = get_pripady_data()
     
     if df.empty:
@@ -643,20 +646,15 @@ elif selected_page == "📊 Přehled kauz":
             smaz_pripad(id_spisu)
             st.cache_data.clear()
             
-        # --- NOVÁ FUNKCE PRO HROMADNÉ POTVRZENÍ ---
         def akce_videl_jsem_vse():
             resetuj_vsechna_upozorneni()
             st.cache_data.clear()
 
         # --- A) ČERVENÁ SEKCE (ZMĚNY) ---
         if not df_zmeny.empty:
-            # Rozdělení na sloupce: Nadpis vlevo, tlačítko "Vše přečteno" vpravo
             col_head, col_btn = st.columns([3, 1])
-            with col_head:
-                st.subheader("🚨 Případy se změnou ve spise")
-            with col_btn:
-                # Tlačítko se objeví jen když jsou změny
-                st.button("👁️ Viděl jsem vše", on_click=akce_videl_jsem_vse, type="primary", use_container_width=True)
+            with col_head: st.subheader("🚨 Případy se změnou ve spise")
+            with col_btn: st.button("👁️ Viděl jsem vše", on_click=akce_videl_jsem_vse, type="primary", use_container_width=True)
 
             for index, row in df_zmeny.iterrows():
                 try:
@@ -680,8 +678,18 @@ elif selected_page == "📊 Přehled kauz":
                         st.write(f"📅 **{row['posledni_udalost']}**")
                         st.caption(f"Kontrolováno: {formatted_time}")
                     with c4:
+                        # Tlačítka akcí
                         st.link_button("Otevřít", row['url'])
-                        st.button("👁️ Viděl jsem", key=f"seen_{row['id']}", on_click=akce_videl_jsem, args=(row['id'],))
+                        
+                        # NOVÉ: Tlačítko EDITOVAT (vyskakovací okénko)
+                        with st.popover("✏️", help="Upravit název"):
+                            novy_nazev = st.text_input("Nový název", value=row['oznaceni'], key=f"edit_red_{row['id']}")
+                            if st.button("Uložit", key=f"save_red_{row['id']}"):
+                                prejmenuj_pripad(row['id'], novy_nazev)
+                                st.cache_data.clear()
+                                st.rerun()
+
+                        st.button("👁️ Viděl", key=f"seen_{row['id']}", on_click=akce_videl_jsem, args=(row['id'],))
                         st.button("🗑️", key=f"del_{row['id']}", help="Smazat", on_click=akce_smazat, args=(row['id'],))
 
         # --- B) ZELENÁ SEKCE (BEZ ZMĚN) ---
@@ -711,7 +719,17 @@ elif selected_page == "📊 Přehled kauz":
                         st.caption(f"Kontrolováno: {formatted_time}")
                     with c4:
                         st.link_button("Otevřít", row['url'])
+                        
+                        # NOVÉ: Tlačítko EDITOVAT (vyskakovací okénko)
+                        with st.popover("✏️", help="Upravit název"):
+                            novy_nazev = st.text_input("Nový název", value=row['oznaceni'], key=f"edit_green_{row['id']}")
+                            if st.button("Uložit", key=f"save_green_{row['id']}"):
+                                prejmenuj_pripad(row['id'], novy_nazev)
+                                st.cache_data.clear()
+                                st.rerun()
+                                
                         st.button("🗑️", key=f"del_{row['id']}", help="Smazat", on_click=akce_smazat, args=(row['id'],))
+                        
 # -------------------------------------------------------------------------
 # STRÁNKA: AUDITNÍ HISTORIE
 # -------------------------------------------------------------------------
