@@ -683,7 +683,7 @@ elif selected_page == "📊 Přehled kauz":
                         
                         # NOVÉ: Tlačítko EDITOVAT (vyskakovací okénko)
                         with st.popover("✏️", help="Upravit název"):
-                            novy_nazev = st.text_input("Nový název", value=row['oznaceni'], key=f"edit_red_{row['id']}")
+                            novy_nazev = st.text_input("Název kauzy", value=row['oznaceni'], key=f"edit_red_{row['id']}")
                             if st.button("Uložit", key=f"save_red_{row['id']}"):
                                 prejmenuj_pripad(row['id'], novy_nazev)
                                 st.cache_data.clear()
@@ -729,7 +729,7 @@ elif selected_page == "📊 Přehled kauz":
                                 st.rerun()
                                 
                         st.button("🗑️", key=f"del_{row['id']}", help="Smazat", on_click=akce_smazat, args=(row['id'],))
-                        
+
 # -------------------------------------------------------------------------
 # STRÁNKA: AUDITNÍ HISTORIE
 # -------------------------------------------------------------------------
