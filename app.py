@@ -85,7 +85,7 @@ SOUDY_MAPA = {
     "KSSTCAB": "Krajský soud v Praze", "OSBN": "Okresní soud v Benešově", "OSBE": "Okresní soud v Berouně",
     "OSKL": "Okresní soud v Kladně", "OSSTCKO": "Okresní soud v Kolíně", "OSKH": "Okresní soud v Kutné Hoře",
     "OSME": "Okresní soud v Mělníku", "OSSTCMB": "Okresní soud v Mladé Boleslavi", "OSNB": "Okresní soud v Nymburce",
-    "OSSTCPY": "Okresní soud Praha-východ", "OSSTCZA": "Okresní soud Praha-západ", "OSPB": "Okresní soud v Příbrami",
+    "OSSTCPY": "Okresní soud Praha-východ", "OSSTCPZ": "Okresní soud Praha-západ", "OSPB": "Okresní soud v Příbrami",
     "OSSTCRA": "Okresní soud v Rakovníku", "KSJICCB": "Krajský soud v Českých Budějovicích", "KSCBTAB": "KS Č. Budějovice - pobočka Tábor",
     "OSJICCB": "Okresní soud v Českých Budějovicích", "OSCK": "Okresní soud v Českém Krumlově", "OSJH": "Okresní soud v Jindřichově Hradci",
     "OSJICPE": "Okresní soud v Pelhřimově", "OSJICPI": "Okresní soud v Písku", "OSPT": "Okresní soud v Prachaticích",
@@ -106,10 +106,10 @@ SOUDY_MAPA = {
     "OSJIMBM": "Městský soud v Brně", "OSBK": "Okresní soud v Blansku", "OSBO": "Okresní soud Brno-venkov",
     "OSJIMBV": "Okresní soud v Břeclavi", "OSHO": "Okresní soud v Hodoníně", "OSJI": "Okresní soud v Jihlavě",
     "OSKM": "Okresní soud v Kroměříži", "OSPV": "Okresní soud v Prostějově", "OSTRB": "Okresní soud v Třebíči",
-    "OSUH": "Okresní soud v Uherském Hradišti", "OSJIMVY": "Okresní soud ve Vyškově", "OSJIMZL": "Okresní soud ve Zlíně",
+    "OSJIMUH": "Okresní soud v Uherském Hradišti", "OSJIMVY": "Okresní soud ve Vyškově", "OSJIMZL": "Okresní soud ve Zlíně",
     "OSJIMZN": "Okresní soud ve Znojmě", "OSZR": "Okresní soud ve Žďáru nad Sázavou", "KSSEMOS": "Krajský soud v Ostravě",
     "KSOSOL": "KS Ostrava - pobočka Olomouc", "OSBR": "Okresní soud v Bruntále", "OSFM": "Okresní soud ve Frýdku-Místku",
-    "OSJE": "Okresní soud v Jeseníku", "OSKA": "Okresní soud v Karviné", "OSNJ": "Okresní soud v Novém Jičíně",
+    "OSJE": "Okresní soud v Jeseníku", "OSSEMKA": "Okresní soud v Karviné", "OSNJ": "Okresní soud v Novém Jičíně",
     "OSOL": "Okresní soud v Olomouci", "OSOP": "Okresní soud v Opavě", "OSSEMOS": "Okresní soud v Ostravě",
     "OSSEMPR": "Okresní soud v Přerově", "OSSU": "Okresní soud v Šumperku", "OSVS": "Okresní soud ve Vsetíně"
 }
