@@ -19,25 +19,39 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # --- KONFIGURACE UI ---
 st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
 
+import os  # <--- TOTO JE DŮLEŽITÉ, PŘIDEJTE TO NA ÚPLNÝ ZAČÁTEK SOUBORU K OSTATNÍM IMPORTŮM
+
+# ... (ostatní importy nechte, jak jsou) ...
+
 # --- 🔐 NAČTENÍ TAJNÝCH ÚDAJŮ (SECRETS) ---
-# Tyto hodnoty se načítají ze Streamlit Cloud Secrets.
-# Pokud běžíte lokálně, musíte si vytvořit soubor .streamlit/secrets.toml
+# Funkce, která zkusí najít heslo v souboru, a když tam není, koukne do Railway Variables
+def get_secret(key):
+    # 1. Zkusíme st.secrets (pro lokální běh nebo Streamlit Cloud)
+    if key in st.secrets:
+        return st.secrets[key]
+    # 2. Zkusíme systémové proměnné (pro Railway)
+    return os.getenv(key)
+
 try:
-    DB_URI = st.secrets["SUPABASE_DB_URL"]
+    # Načítáme pomocí naší chytré funkce
+    DB_URI = get_secret("SUPABASE_DB_URL")
     
-    SUPER_ADMIN_USER = st.secrets["SUPER_ADMIN_USER"]
-    SUPER_ADMIN_PASS = st.secrets["SUPER_ADMIN_PASS"]
-    SUPER_ADMIN_EMAIL = st.secrets["SUPER_ADMIN_EMAIL"]
+    SUPER_ADMIN_USER = get_secret("SUPER_ADMIN_USER")
+    SUPER_ADMIN_PASS = get_secret("SUPER_ADMIN_PASS")
+    SUPER_ADMIN_EMAIL = get_secret("SUPER_ADMIN_EMAIL")
     
-    SMTP_SERVER = "smtp.gmail.com"
+    SMTP_SERVER = "smtp.gmail.com" # Pokud máte Seznam, změňte na smtp.seznam.cz
     SMTP_PORT = 587
-    SMTP_EMAIL = st.secrets["SMTP_EMAIL"]
-    SMTP_PASSWORD = st.secrets["SMTP_PASSWORD"]
-except FileNotFoundError:
-    st.error("Chybí konfigurační soubor secrets! Aplikace nemůže běžet.")
-    st.stop()
-except KeyError as e:
-    st.error(f"V secrets chybí klíč: {e}. Zkontrolujte nastavení.")
+    SMTP_EMAIL = get_secret("SMTP_EMAIL")
+    SMTP_PASSWORD = get_secret("SMTP_PASSWORD")
+
+    # Kontrola, jestli se to povedlo (jestli není něco None)
+    if not DB_URI or not SMTP_EMAIL or not SMTP_PASSWORD:
+        st.error("Chybí některá klíčová hesla! Zkontrolujte nastavení Variables na Railway.")
+        st.stop()
+
+except Exception as e:
+    st.error(f"Chyba při načítání konfigurace: {e}")
     st.stop()
 
 # --- KOMPLETNÍ DATABÁZE SOUDŮ ---
