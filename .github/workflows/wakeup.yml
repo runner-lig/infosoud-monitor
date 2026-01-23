@@ -1,0 +1,17 @@
+name: Wake up Streamlit
+
+on:
+  schedule:
+    # Každých 15 minut (častěji)
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  wake_up:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake up app
+        # Použijeme hlavičku User-Agent, abychom vypadali jako Chrome
+        run: |
+          curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124" \
+          -I https://infosoud-monitor-iybzhjkvqdw9kwz9zubolv.streamlit.app/
