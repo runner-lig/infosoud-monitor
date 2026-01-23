@@ -107,7 +107,7 @@ SOUDY_MAPA = {
     "OSBV": "Okresní soud v Břeclavi", "OSHO": "Okresní soud v Hodoníně", "OSJI": "Okresní soud v Jihlavě",
     "OSKM": "Okresní soud v Kroměříži", "OSPV": "Okresní soud v Prostějově", "OSTRB": "Okresní soud v Třebíči",
     "OSUH": "Okresní soud v Uherském Hradišti", "OSVY": "Okresní soud ve Vyškově", "OSZL": "Okresní soud ve Zlíně",
-    "OSZN": "Okresní soud ve Znojmě", "OSZR": "Okresní soud ve Žďáru nad Sázavou", "KSOS": "Krajský soud v Ostravě",
+    "OSZN": "Okresní soud ve Znojmě", "OSZR": "Okresní soud ve Žďáru nad Sázavou", "KSSEMOS": "Krajský soud v Ostravě",
     "KSOSOL": "KS Ostrava - pobočka Olomouc", "OSBR": "Okresní soud v Bruntále", "OSFM": "Okresní soud ve Frýdku-Místku",
     "OSJE": "Okresní soud v Jeseníku", "OSKA": "Okresní soud v Karviné", "OSNJ": "Okresní soud v Novém Jičíně",
     "OSOL": "Okresní soud v Olomouci", "OSOP": "Okresní soud v Opavě", "OSOS": "Okresní soud v Ostravě",
