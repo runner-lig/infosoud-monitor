@@ -19,39 +19,52 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # --- KONFIGURACE UI ---
 st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
 
-import os  # <--- TOTO JE DŮLEŽITÉ, PŘIDEJTE TO NA ÚPLNÝ ZAČÁTEK SOUBORU K OSTATNÍM IMPORTŮM
+import os  # <--- Ujistěte se, že toto je úplně nahoře v importech
 
-# ... (ostatní importy nechte, jak jsou) ...
+# ... (zbytek importů) ...
 
 # --- 🔐 NAČTENÍ TAJNÝCH ÚDAJŮ (SECRETS) ---
-# Funkce, která zkusí najít heslo v souboru, a když tam není, koukne do Railway Variables
 def get_secret(key):
-    # 1. Zkusíme st.secrets (pro lokální běh nebo Streamlit Cloud)
-    if key in st.secrets:
-        return st.secrets[key]
-    # 2. Zkusíme systémové proměnné (pro Railway)
-    return os.getenv(key)
+    # 1. NEJDŘÍV zkusíme systémové proměnné (pro Railway)
+    # Tím se vyhneme chybě "No secrets found", protože os.getenv neselže, i když soubor chybí.
+    value = os.getenv(key)
+    if value is not None:
+        return value
+
+    # 2. Teprve když nic nenajdeme, zkusíme st.secrets (pro lokální vývoj)
+    try:
+        # Použijeme bezpečnější .get(), aby to nepadalo
+        if hasattr(st, "secrets") and key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+        
+    return None
 
 try:
-    # Načítáme pomocí naší chytré funkce
+    # Načítáme pomocí naší opravené funkce
     DB_URI = get_secret("SUPABASE_DB_URL")
     
     SUPER_ADMIN_USER = get_secret("SUPER_ADMIN_USER")
     SUPER_ADMIN_PASS = get_secret("SUPER_ADMIN_PASS")
     SUPER_ADMIN_EMAIL = get_secret("SUPER_ADMIN_EMAIL")
     
-    SMTP_SERVER = "smtp.gmail.com" # Pokud máte Seznam, změňte na smtp.seznam.cz
+    SMTP_SERVER = "smtp.gmail.com"
     SMTP_PORT = 587
     SMTP_EMAIL = get_secret("SMTP_EMAIL")
     SMTP_PASSWORD = get_secret("SMTP_PASSWORD")
 
-    # Kontrola, jestli se to povedlo (jestli není něco None)
-    if not DB_URI or not SMTP_EMAIL or not SMTP_PASSWORD:
-        st.error("Chybí některá klíčová hesla! Zkontrolujte nastavení Variables na Railway.")
+    # Kontrola, jestli se to povedlo
+    if not DB_URI or not SMTP_EMAIL:
+        # Pokud chybí hesla, vypíšeme, co přesně se načetlo (pro debugování)
+        # Pozor: V ostrém provozu hesla nevypisujte, ale teď pro kontrolu ano
+        st.error("Chyba: Nepodařilo se načíst hesla z Railway Variables.")
+        st.write(f"DB_URI načteno? {'ANO' if DB_URI else 'NE'}")
+        st.write(f"EMAIL načten? {'ANO' if SMTP_EMAIL else 'NE'}")
         st.stop()
 
 except Exception as e:
-    st.error(f"Chyba při načítání konfigurace: {e}")
+    st.error(f"Kritická chyba při konfiguraci: {e}")
     st.stop()
 
 # --- KOMPLETNÍ DATABÁZE SOUDŮ ---
