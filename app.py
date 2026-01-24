@@ -29,7 +29,7 @@ if not hasattr(st, "monitor_status"):
         "running": False,
         "progress": 0,
         "total": 0,
-        "mode": "Neznámý", # Zda běží denní nebo noční
+        "mode": "Neznámý",
         "start_time": None,
         "last_finished": None
     }
@@ -491,9 +491,8 @@ def start_scheduler():
     scheduler.start()
     return scheduler
 
-# Worker funkce - přijímá i posledni_udalost, ale nepoužívá ji pro kontrolu
 def zkontroluj_jeden_pripad(row):
-    cid, params_str, old_cnt, name, _ = row  # Unpack 5 hodnot (posledni je last_event)
+    cid, params_str, old_cnt, name, _ = row  # Unpack 5 hodnot
     
     conn = None; db_pool = None
     try:
@@ -538,7 +537,6 @@ def zkontroluj_jeden_pripad(row):
     finally:
         if conn and db_pool: db_pool.putconn(conn)
 
-# Pomocná funkce pro detekci "skončených" případů
 def je_pripad_skonceny(text_udalosti):
     if not text_udalosti: return False
     txt = text_udalosti.lower()
@@ -557,7 +555,6 @@ def monitor_job():
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
-        # Načteme i poslední událost pro filtraci
         c.execute("SELECT id, params_json, pocet_udalosti, oznaceni, posledni_udalost FROM pripady")
         all_rows = c.fetchall()
         db_pool.putconn(conn); conn = None 
@@ -565,7 +562,6 @@ def monitor_job():
         # --- FILTRACE (DEN vs NOC) ---
         aktualni_hodina = datetime.datetime.now().hour
         
-        # Rozdělení na aktivní a skončené
         aktivni_pripady = []
         skoncene_pripady = []
         
@@ -576,7 +572,6 @@ def monitor_job():
             else:
                 aktivni_pripady.append(r)
         
-        # Logika výběru
         target_rows = []
         rezim_text = ""
         
@@ -701,7 +696,7 @@ with st.sidebar:
             
     st.markdown("---")
 
-    # --- PŘIDÁNÍ SPISU (BEZ TLAČÍTKA RUČNÍ KONTROLY) ---
+    # --- PŘIDÁNÍ SPISU ---
     st.header("➕ Přidat nový spis")
     
     if st.session_state.get('smazat_vstupy'):
@@ -736,6 +731,85 @@ with st.sidebar:
         del st.session_state['vysledek_akce']
         
     st.divider()
+
+menu_options = ["📊 Přehled kauz", "📜 Auditní historie"]
+if st.session_state['user_role'] in ["Super Admin", "Administrátor"]:
+    menu_options.append("👥 Správa uživatelů")
+
+selected_page = st.sidebar.radio("Menu", menu_options)
+st.sidebar.markdown("---")
+
+# -------------------------------------------------------------------------
+# STRÁNKA: SPRÁVA UŽIVATELŮ
+# -------------------------------------------------------------------------
+if selected_page == "👥 Správa uživatelů":
+    st.header("👥 Správa uživatelů")
+    current_role = st.session_state['user_role']
+    
+    with st.expander("➕ Vytvořit nového uživatele", expanded=True):
+        c1, c2, c3, c4 = st.columns([2,2,2,1])
+        new_user = c1.text_input("Jméno")
+        new_pass = c2.text_input("Heslo", type="password")
+        new_email = c3.text_input("E-mail pro notifikace")
+        
+        roles_available = ["Uživatel"]
+        if current_role == "Super Admin": roles_available.append("Administrátor")
+        new_role = c1.selectbox("Role", roles_available)
+        
+        if c4.button("Vytvořit"):
+            if new_user and new_pass and new_email:
+                if create_user(new_user, new_pass, new_email, new_role):
+                    st.success(f"Uživatel {new_user} vytvořen.")
+                    time.sleep(1); st.rerun()
+                else: st.error("Uživatel již existuje.")
+            else: st.warning("Vyplňte jméno, heslo i e-mail.")
+
+    st.subheader("Seznam uživatelů")
+    users_df = get_all_users()
+    if not users_df.empty:
+        for index, row in users_df.iterrows():
+            if row['username'] == SUPER_ADMIN_USER: continue
+            if current_role == "Administrátor" and row['role'] == "Administrátor": continue
+
+            with st.container(border=True):
+                c_info, c_del = st.columns([5, 1])
+                c_info.markdown(f"**{row['username']}** `({row['role']})` - 📧 {row['email']}")
+                can_delete = False
+                if current_role == "Super Admin": can_delete = True
+                elif current_role == "Administrátor" and row['role'] == "Uživatel": can_delete = True
+                
+                if can_delete:
+                    if c_del.button("Smazat", key=f"del_user_{row['username']}"):
+                        delete_user(row['username']); st.rerun()
+
+# -------------------------------------------------------------------------
+# STRÁNKA: PŘEHLED KAUZ (S CHYTRÝM HLEDÁNÍM)
+# -------------------------------------------------------------------------
+elif selected_page == "📊 Přehled kauz":
+    
+    ITEMS_PER_PAGE = 50
+    if 'page' not in st.session_state:
+        st.session_state['page'] = 1
+
+    # --- FUNKCE PRO NAČÍTÁNÍ DAT ---
+    def get_zmeny_all():
+        conn = None; db_pool = None
+        try:
+            conn, db_pool = get_db_connection()
+            return pd.read_sql_query("SELECT * FROM pripady WHERE ma_zmenu = TRUE ORDER BY id DESC", conn)
+        except: return pd.DataFrame()
+        finally: 
+            if conn and db_pool: db_pool.putconn(conn)
+
+    # Načteme VŠECHNY zelené případy najednou (pro Python filtr)
+    def get_all_green_cases_raw():
+        conn = None; db_pool = None
+        try:
+            conn, db_pool = get_db_connection()
+            return pd.read_sql_query("SELECT * FROM pripady WHERE ma_zmenu = FALSE ORDER BY id DESC", conn)
+        except: return pd.DataFrame()
+        finally: 
+            if conn and db_pool: db_pool.putconn(conn)
 
     # --- HLAVNÍ VÝPIS KAUZ ---
     df_zmeny = get_zmeny_all()
