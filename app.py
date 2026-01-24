@@ -394,7 +394,6 @@ def pridej_pripad(url, oznaceni):
     data = stahni_data_z_infosoudu(p)
     if data is None: return False, "Spis nenalezen."
     
-    # Formátování s mezerami pro ukládání do DB (log)
     spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
     
     conn = None; db_pool = None
@@ -513,7 +512,6 @@ def monitor_job(status_placeholder=None, progress_bar=None):
                         conn.commit()
                     except: pass
                     
-                    # Formátování s mezerami pro e-mail
                     spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
                     
                     odeslat_email_notifikaci(name, new_data[-1], spis_zn)
@@ -656,7 +654,7 @@ if selected_page == "👥 Správa uživatelů":
                         delete_user(row['username']); st.rerun()
 
 # -------------------------------------------------------------------------
-# STRÁNKA: PŘEHLED KAUZ (S OPTIMALIZACÍ)
+# STRÁNKA: PŘEHLED KAUZ (S CHYTRÝM HLEDÁNÍM V PYTHONU)
 # -------------------------------------------------------------------------
 elif selected_page == "📊 Přehled kauz":
     
@@ -674,56 +672,14 @@ elif selected_page == "📊 Přehled kauz":
         finally: 
             if conn and db_pool: db_pool.putconn(conn)
 
-    # --- 🔍 ROZŠÍŘENÉ HLEDÁNÍ (NÁZEV, ZNAČKA, SOUD, TEXT) ---
-    def get_green_cases(search_query="", page=1, limit=50):
+    # --- ZMĚNA: Načte VŠECHNY zelené případy najednou (pro Python filtr) ---
+    def get_all_green_cases_raw():
         conn = None; db_pool = None
         try:
             conn, db_pool = get_db_connection()
-            offset = (page - 1) * limit
-            if search_query:
-                # Hledáme v: oznaceni, params_json (spis. značka), realny_nazev_soudu, posledni_udalost
-                query = """
-                    SELECT * FROM pripady 
-                    WHERE ma_zmenu = FALSE 
-                    AND (
-                        oznaceni ILIKE %s OR 
-                        params_json ILIKE %s OR 
-                        realny_nazev_soudu ILIKE %s OR
-                        posledni_udalost ILIKE %s
-                    )
-                    ORDER BY id DESC LIMIT %s OFFSET %s
-                """
-                like_q = f"%{search_query}%"
-                return pd.read_sql_query(query, conn, params=(like_q, like_q, like_q, like_q, limit, offset))
-            else:
-                query = "SELECT * FROM pripady WHERE ma_zmenu = FALSE ORDER BY id DESC LIMIT %s OFFSET %s"
-                return pd.read_sql_query(query, conn, params=(limit, offset))
+            # Načteme vše, řazeno sestupně
+            return pd.read_sql_query("SELECT * FROM pripady WHERE ma_zmenu = FALSE ORDER BY id DESC", conn)
         except: return pd.DataFrame()
-        finally: 
-            if conn and db_pool: db_pool.putconn(conn)
-
-    def get_green_count(search_query=""):
-        conn = None; db_pool = None
-        try:
-            conn, db_pool = get_db_connection()
-            c = conn.cursor()
-            if search_query:
-                like_q = f"%{search_query}%"
-                query = """
-                    SELECT COUNT(*) FROM pripady 
-                    WHERE ma_zmenu = FALSE 
-                    AND (
-                        oznaceni ILIKE %s OR 
-                        params_json ILIKE %s OR 
-                        realny_nazev_soudu ILIKE %s OR
-                        posledni_udalost ILIKE %s
-                    )
-                """
-                c.execute(query, (like_q, like_q, like_q, like_q))
-            else:
-                c.execute("SELECT COUNT(*) FROM pripady WHERE ma_zmenu = FALSE")
-            return c.fetchone()[0]
-        except: return 0
         finally: 
             if conn and db_pool: db_pool.putconn(conn)
 
@@ -748,7 +704,7 @@ elif selected_page == "📊 Přehled kauz":
                 nazev_val = st.session_state.input_nazev
                 ok, msg = pridej_pripad(url_val, nazev_val)
                 trvani = time.time() - zacatek
-                if trvani < 5: time.sleep(5 - trvani)
+                if trvani < 10: time.sleep(10 - trvani)
                 
                 if ok:
                     st.cache_data.clear()
@@ -779,34 +735,65 @@ elif selected_page == "📊 Přehled kauz":
     # --- HLAVNÍ VÝPIS KAUZ ---
     df_zmeny = get_zmeny_all()
 
-    # --- NOVÉ VYHLEDÁVACÍ POLE S TLAČÍTKEM ---
+    # --- VYHLEDÁVÁNÍ ---
     c_search_input, c_search_btn = st.columns([4, 1])
     with c_search_input:
         search_query_input = st.text_input("Hledat v archivu (Název, značka, soud, text)", 
                                            label_visibility="collapsed", 
-                                           placeholder="🔍 Hledat v archivu...")
+                                           placeholder="🔍 Hledat v archivu... (např. 20 C 70 / 2014)")
     with c_search_btn:
         search_clicked = st.button("🔍 Hledat", use_container_width=True)
 
-    # Logika pro hledání (uložení do session_state)
     if 'last_search' not in st.session_state: st.session_state['last_search'] = ""
     
-    # Pokud se kliklo na tlačítko nebo se změnil text a stiskl Enter
     if search_clicked or search_query_input != st.session_state['last_search']:
         st.session_state['page'] = 1
         st.session_state['last_search'] = search_query_input
-        # Pokud bylo kliknuto na tlačítko, vynutíme rerun, aby se načetla nová data
-        if search_clicked:
-            st.rerun()
+        if search_clicked: st.rerun()
 
-    # Použijeme hodnotu ze session_state pro query
     active_search_query = st.session_state['last_search']
 
-    total_green = get_green_count(active_search_query)
+    # --- NAČTENÍ A FILTROVÁNÍ V PYTHONU ---
+    df_all_green = get_all_green_cases_raw()
+    
+    if not df_all_green.empty and active_search_query:
+        # Převedeme hledaný výraz na malá písmena a odstraníme mezery (pro porovnání čísel)
+        q_lower = active_search_query.lower()
+        q_no_space = q_lower.replace(" ", "")
+        
+        # Funkce pro filtraci jednoho řádku
+        def filter_row(row):
+            # 1. Hledáme v názvu a soudu (klasický text)
+            if q_lower in str(row['oznaceni']).lower(): return True
+            if q_lower in str(row['realny_nazev_soudu']).lower(): return True
+            if q_lower in str(row['posledni_udalost']).lower(): return True
+            
+            # 2. Hledáme ve spojené spisové značce (bez mezer)
+            # Tím najdeme "20 C 70 / 2014" i když uživatel napíše "20C70/2014"
+            try:
+                p = json.loads(row['params_json'])
+                # Sestavíme značku a odstraníme z ní mezery
+                znacka = f"{p.get('senat')}{p.get('druh')}{p.get('cislo')}/{p.get('rocnik')}".lower()
+                if q_no_space in znacka: return True
+            except: pass
+            
+            return False
+
+        # Aplikujeme filtr
+        mask = df_all_green.apply(filter_row, axis=1)
+        df_filtered = df_all_green[mask]
+    else:
+        df_filtered = df_all_green
+
+    # --- STRÁNKOVÁNÍ ---
+    total_green = len(df_filtered)
     total_pages = math.ceil(total_green / ITEMS_PER_PAGE)
     if total_pages < 1: total_pages = 1
     
-    df_ostatni = get_green_cases(active_search_query, st.session_state['page'], ITEMS_PER_PAGE)
+    start_idx = (st.session_state['page'] - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    
+    df_ostatni = df_filtered.iloc[start_idx:end_idx]
 
     def akce_videl_jsem(id_spisu):
         resetuj_upozorneni(id_spisu)
@@ -826,9 +813,7 @@ elif selected_page == "📊 Přehled kauz":
         for index, row in df_zmeny.iterrows():
             try:
                 p = json.loads(row['params_json'])
-                # Formátování s mezerami pro zobrazení (červené)
                 spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
-                
                 kod_soudu = p.get('soud')
                 nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
                 formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
@@ -874,9 +859,7 @@ elif selected_page == "📊 Přehled kauz":
         for index, row in df_ostatni.iterrows():
             try:
                 p = json.loads(row['params_json'])
-                # Formátování s mezerami pro zobrazení (zelené)
                 spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
-                
                 kod_soudu = p.get('soud')
                 nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
                 formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
