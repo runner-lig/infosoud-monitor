@@ -4,3 +4,4 @@ requests
 beautifulsoup4
 apscheduler
 psycopg2-binary
+extra-streamlit-components
