@@ -12,6 +12,7 @@ import time
 import random
 import datetime
 import os
+import math # Pro výpočet stránek
 from urllib.parse import urlparse, parse_qs
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -467,7 +468,6 @@ def prejmenuj_pripad(cid, novy_nazev):
 @st.cache_resource
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    # Interval 60 minut je OK
     scheduler.add_job(monitor_job, 'interval', minutes=60)
     scheduler.start()
     return scheduler
@@ -615,52 +615,89 @@ if selected_page == "👥 Správa uživatelů":
                         delete_user(row['username']); st.rerun()
 
 # -------------------------------------------------------------------------
-# STRÁNKA: PŘEHLED KAUZ
+# STRÁNKA: PŘEHLED KAUZ (S OPTIMALIZACÍ)
 # -------------------------------------------------------------------------
 elif selected_page == "📊 Přehled kauz":
     
-    # --- 1. FUNKCE PRO NAČÍTÁNÍ DAT S PAMĚTÍ ---
-    def get_pripady_data():
-        conn = None
-        db_pool = None
+    # Nastavení stránkování
+    ITEMS_PER_PAGE = 50
+    if 'page' not in st.session_state:
+        st.session_state['page'] = 1
+
+    # --- 1. FUNKCE PRO NAČÍTÁNÍ DAT (S FILTREM A STRÁNKOVÁNÍM) ---
+    def get_zmeny_all():
+        """Načte VŠECHNY případy se změnou (červené). Ty nebudeme stránkovat."""
+        conn = None; db_pool = None
         try:
             conn, db_pool = get_db_connection()
-            df_result = pd.read_sql_query("SELECT * FROM pripady ORDER BY id DESC", conn)
-            return df_result
-        except Exception:
-            return pd.DataFrame()
-        finally:
+            return pd.read_sql_query("SELECT * FROM pripady WHERE ma_zmenu = TRUE ORDER BY id DESC", conn)
+        except: return pd.DataFrame()
+        finally: 
+            if conn and db_pool: db_pool.putconn(conn)
+
+    def get_green_cases(search_query="", page=1, limit=50):
+        """Načte 'zelené' případy se stránkováním a hledáním."""
+        conn = None; db_pool = None
+        try:
+            conn, db_pool = get_db_connection()
+            offset = (page - 1) * limit
+            
+            if search_query:
+                # Pokud hledáme, hledáme v názvu nebo v parametrech (spis. značce)
+                query = """
+                    SELECT * FROM pripady 
+                    WHERE ma_zmenu = FALSE 
+                    AND (oznaceni ILIKE %s OR params_json ILIKE %s)
+                    ORDER BY id DESC LIMIT %s OFFSET %s
+                """
+                like_q = f"%{search_query}%"
+                return pd.read_sql_query(query, conn, params=(like_q, like_q, limit, offset))
+            else:
+                # Pokud nehledáme, bereme jen stránku
+                query = "SELECT * FROM pripady WHERE ma_zmenu = FALSE ORDER BY id DESC LIMIT %s OFFSET %s"
+                return pd.read_sql_query(query, conn, params=(limit, offset))
+        except: return pd.DataFrame()
+        finally: 
+            if conn and db_pool: db_pool.putconn(conn)
+
+    def get_green_count(search_query=""):
+        """Vrátí celkový počet zelených případů (pro výpočet počtu stránek)."""
+        conn = None; db_pool = None
+        try:
+            conn, db_pool = get_db_connection()
+            c = conn.cursor()
+            if search_query:
+                like_q = f"%{search_query}%"
+                c.execute("SELECT COUNT(*) FROM pripady WHERE ma_zmenu = FALSE AND (oznaceni ILIKE %s OR params_json ILIKE %s)", (like_q, like_q))
+            else:
+                c.execute("SELECT COUNT(*) FROM pripady WHERE ma_zmenu = FALSE")
+            return c.fetchone()[0]
+        except: return 0
+        finally: 
             if conn and db_pool: db_pool.putconn(conn)
 
     # --- 2. SIDEBAR ---
     with st.sidebar:
         st.header("➕ Přidat nový spis")
         
-        # 1. ČIŠTĚNÍ POLÍČEK
         if st.session_state.get('smazat_vstupy'):
             st.session_state.input_url = ""
             st.session_state.input_nazev = ""
             st.session_state.smazat_vstupy = False 
         
-        # 2. VSTUPNÍ POLE
         st.text_input("Název kauzy", key="input_nazev")
         st.text_input("URL z Infosoudu", key="input_url")
         
-        # 3. TLAČÍTKO (Na celou šířku)
         tlacitko_stisknuto = st.button("Sledovat", use_container_width=True)
 
-        # 4. LOGIKA PO STISKNUTÍ
         if tlacitko_stisknuto:
             with st.spinner("⏳ Přidávám případ..."):
                 zacatek = time.time()
-                
                 url_val = st.session_state.input_url
                 nazev_val = st.session_state.input_nazev
                 ok, msg = pridej_pripad(url_val, nazev_val)
-                
                 trvani = time.time() - zacatek
-                if trvani < 10:
-                    time.sleep(10 - trvani)
+                if trvani < 10: time.sleep(10 - trvani)
                 
                 if ok:
                     st.cache_data.clear()
@@ -668,9 +705,7 @@ elif selected_page == "📊 Přehled kauz":
                     st.session_state['smazat_vstupy'] = True
                 else:
                     st.session_state['vysledek_akce'] = ("error", msg)
-            
-            if ok:
-                st.rerun()
+            if ok: st.rerun()
 
         if 'vysledek_akce' in st.session_state:
             typ, text = st.session_state['vysledek_akce']
@@ -679,7 +714,6 @@ elif selected_page == "📊 Přehled kauz":
             del st.session_state['vysledek_akce']
         
         st.divider()
-        
         if st.button("🔄 Ruční kontrola"):
             st.write("---")
             status_text = st.empty()
@@ -689,141 +723,145 @@ elif selected_page == "📊 Přehled kauz":
             my_bar.progress(100)
             time.sleep(2)
             st.rerun()
-            
         st.divider()
-        if st.button("🧪 SIMULACE ZMĚNY + E-MAIL"):
-             conn = None
-             db_pool = None
-             try:
-                 conn, db_pool = get_db_connection()
-                 df_test = pd.read_sql_query("SELECT * FROM pripady ORDER BY id ASC LIMIT 2", conn)
-                 if not df_test.empty:
-                     c = conn.cursor()
-                     ids = tuple(df_test['id'].tolist())
-                     if len(ids) == 1: ids = f"({ids[0]})"
-                     c.execute(f"UPDATE pripady SET ma_zmenu=TRUE WHERE id IN {ids}")
-                     conn.commit()
-                     
-                     st.toast("Odesílám notifikace...")
-                     log_do_historie("Simulace", "Spuštěna simulace změny")
-                     for i, row in df_test.iterrows():
-                         try: p=json.loads(row['params_json']); znacka=f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
-                         except: znacka="Test"
-                         odeslat_email_notifikaci(row['oznaceni'], "🔔 TESTOVACÍ SIMULACE ZMĚNY", znacka)
-                     st.success("Hotovo."); time.sleep(2); st.rerun()
-                 else: st.warning("Žádné spisy.")
-             except Exception as e: st.error(str(e))
-             finally:
-                 if conn and db_pool: db_pool.putconn(conn)
 
     # --- 3. HLAVNÍ VÝPIS KAUZ ---
-    df = get_pripady_data()
     
-    if df.empty:
-        st.info("Zatím nesledujete žádné spisy. Přidejte první vlevo.")
+    # A) Načtení změn (červené) - VŽDY VŠECHNY
+    df_zmeny = get_zmeny_all()
+
+    # B) Vyhledávání a stránkování pro ostatní (zelené)
+    search_query = st.text_input("🔍 Vyhledat v archivu (Název nebo značka)", placeholder="Hledat...")
+    
+    # Pokud uživatel začne hledat, resetujeme stránku na 1
+    if 'last_search' not in st.session_state: st.session_state['last_search'] = ""
+    if search_query != st.session_state['last_search']:
+        st.session_state['page'] = 1
+        st.session_state['last_search'] = search_query
+
+    total_green = get_green_count(search_query)
+    total_pages = math.ceil(total_green / ITEMS_PER_PAGE)
+    if total_pages < 1: total_pages = 1
+    
+    # Načtení jen aktuální stránky (50 položek)
+    df_ostatni = get_green_cases(search_query, st.session_state['page'], ITEMS_PER_PAGE)
+
+    # Callbacks
+    def akce_videl_jsem(id_spisu):
+        resetuj_upozorneni(id_spisu)
+        # Po přesunu do zelených resetujeme cache nebo stránku neřešíme, jen refresh
+        # st.rerun() - Streamlit udělá refresh sám
+
+    def akce_smazat(id_spisu):
+        smaz_pripad(id_spisu)
+        # st.rerun()
+
+    def akce_videl_jsem_vse():
+        resetuj_vsechna_upozorneni()
+        # st.rerun()
+
+    # --- A) ČERVENÁ SEKCE ---
+    if not df_zmeny.empty:
+        col_head, col_btn = st.columns([3, 1])
+        with col_head: st.subheader(f"🚨 Případy se změnou ({len(df_zmeny)})")
+        with col_btn: st.button("👁️ Viděl jsem vše", on_click=akce_videl_jsem_vse, type="primary", use_container_width=True)
+
+        for index, row in df_zmeny.iterrows():
+            try:
+                p = json.loads(row['params_json'])
+                spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
+                kod_soudu = p.get('soud')
+                nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
+                formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
+            except:
+                spisova_znacka = "?"; nazev_soudu = "?"; formatted_time = ""
+
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns([2, 3, 4, 1])
+                with c1:
+                    st.markdown(f"### {row['oznaceni']}")
+                    st.error("🚨 **NOVÁ UDÁLOST**") 
+                with c2:
+                    st.markdown(f"📂 **{spisova_znacka}**")
+                    st.markdown(f"🏛️ {nazev_soudu}")
+                with c3:
+                    st.write(f"📅 **{row['posledni_udalost']}**")
+                    st.caption(f"Kontrolováno: {formatted_time}")
+                with c4:
+                    st.link_button("Otevřít", row['url'])
+                    with st.popover("✏️", help="Upravit název"):
+                        novy_nazev = st.text_input("Název", value=row['oznaceni'], key=f"edit_red_{row['id']}")
+                        if st.button("Uložit", key=f"save_red_{row['id']}"):
+                            prejmenuj_pripad(row['id'], novy_nazev)
+                            st.rerun()
+                    st.button("👁️ Viděl", key=f"seen_{row['id']}", on_click=akce_videl_jsem, args=(row['id'],))
+                    with st.popover("🗑️", help="Odstranit"):
+                        st.write("Opravdu smazat?")
+                        if st.button("Ano", key=f"confirm_del_red_{row['id']}", type="primary"):
+                            akce_smazat(row['id'])
+                            st.rerun()
+
+    # --- B) ZELENÁ SEKCE (Stránkovaná) ---
+    if not df_zmeny.empty: st.markdown("---")
+    
+    st.subheader(f"✅ Případy beze změn (Celkem: {total_green})")
+    
+    if df_ostatni.empty:
+        st.info("Žádné případy nenalezeny.")
     else:
-        df_zmeny = df[df['ma_zmenu'] == True]
-        df_ostatni = df[df['ma_zmenu'] == False]
+        for index, row in df_ostatni.iterrows():
+            try:
+                p = json.loads(row['params_json'])
+                spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
+                kod_soudu = p.get('soud')
+                nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
+                formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
+            except:
+                spisova_znacka = "?"; nazev_soudu = "?"; formatted_time = ""
 
-        # --- 🛠️ OPRAVA: ZDE JSME SMAZALI st.rerun() z callbacků ---
-        def akce_videl_jsem(id_spisu):
-            resetuj_upozorneni(id_spisu)
-            # ZDE NENÍ st.rerun() - Streamlit to udělá sám po doběhnutí
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns([2, 3, 4, 1])
+                with c1:
+                    st.markdown(f"**{row['oznaceni']}**")
+                    st.caption("✅ Bez změn")
+                with c2:
+                    st.markdown(f"📂 **{spisova_znacka}**")
+                    st.caption(f"🏛️ {nazev_soudu}")
+                with c3:
+                    st.write(f"📅 **{row['posledni_udalost']}**")
+                    st.caption(f"Kontrolováno: {formatted_time}")
+                with c4:
+                    st.link_button("Otevřít", row['url'])
+                    with st.popover("✏️", help="Upravit název"):
+                        novy_nazev = st.text_input("Název", value=row['oznaceni'], key=f"edit_green_{row['id']}")
+                        if st.button("Uložit", key=f"save_green_{row['id']}"):
+                            prejmenuj_pripad(row['id'], novy_nazev)
+                            st.rerun()
+                    with st.popover("🗑️", help="Odstranit"):
+                        st.write("Opravdu smazat?")
+                        if st.button("Ano", key=f"confirm_del_green_{row['id']}", type="primary"):
+                            akce_smazat(row['id'])
+                            st.rerun()
 
-        def akce_smazat(id_spisu):
-            smaz_pripad(id_spisu)
-            # Tady st.rerun() nevadí, ale není nutný, pokud ho voláme z tlačítka
-            
-        def akce_videl_jsem_vse():
-            resetuj_vsechna_upozorneni()
-            # ZDE TAKÉ NENÍ st.rerun()
-
-        # --- A) ČERVENÁ SEKCE ---
-        if not df_zmeny.empty:
-            col_head, col_btn = st.columns([3, 1])
-            with col_head: st.subheader("🚨 Případy se změnou ve spise")
-            with col_btn: st.button("👁️ Viděl jsem vše", on_click=akce_videl_jsem_vse, type="primary", use_container_width=True)
-
-            for index, row in df_zmeny.iterrows():
-                try:
-                    p = json.loads(row['params_json'])
-                    spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
-                    kod_soudu = p.get('soud')
-                    nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
-                    formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
-                except:
-                    spisova_znacka = "?"; nazev_soudu = "?"; formatted_time = ""
-
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns([2, 3, 4, 1])
-                    with c1:
-                        st.markdown(f"### {row['oznaceni']}")
-                        st.error("🚨 **NOVÁ UDÁLOST**") 
-                    with c2:
-                        st.markdown(f"📂 **{spisova_znacka}**")
-                        st.markdown(f"🏛️ {nazev_soudu}")
-                    with c3:
-                        st.write(f"📅 **{row['posledni_udalost']}**")
-                        st.caption(f"Kontrolováno: {formatted_time}")
-                    with c4:
-                        st.link_button("Otevřít", row['url'])
-                        
-                        with st.popover("✏️", help="Upravit název"):
-                            novy_nazev = st.text_input("Název kauzy", value=row['oznaceni'], key=f"edit_red_{row['id']}")
-                            if st.button("Uložit", key=f"save_red_{row['id']}"):
-                                prejmenuj_pripad(row['id'], novy_nazev)
-                                st.rerun()
-
-                        # Tlačítko pro "Viděl jsem" - používá callback on_click
-                        st.button("👁️ Viděl", key=f"seen_{row['id']}", on_click=akce_videl_jsem, args=(row['id'],))
-                        
-                        # POPOVER MAZÁNÍ - Tady st.rerun() potřebujeme, protože to NENÍ callback, ale podmínka
-                        with st.popover("🗑️", help="Odstranit spis"):
-                            st.write("Opravdu smazat?")
-                            if st.button("Ano, odstranit", key=f"confirm_del_red_{row['id']}", type="primary"):
-                                akce_smazat(row['id'])
-                                st.rerun() # <--- Tady MUSÍ být rerun
-
-        # --- B) ZELENÁ SEKCE ---
-        if not df_ostatni.empty:
-            if not df_zmeny.empty: st.markdown("---") 
-            st.subheader("✅ Případy beze změn")
-            for index, row in df_ostatni.iterrows():
-                try:
-                    p = json.loads(row['params_json'])
-                    spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
-                    kod_soudu = p.get('soud')
-                    nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
-                    formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
-                except:
-                    spisova_znacka = "?"; nazev_soudu = "?"; formatted_time = ""
-
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns([2, 3, 4, 1])
-                    with c1:
-                        st.markdown(f"**{row['oznaceni']}**")
-                        st.caption("✅ Bez změn")
-                    with c2:
-                        st.markdown(f"📂 **{spisova_znacka}**")
-                        st.caption(f"🏛️ {nazev_soudu}")
-                    with c3:
-                        st.write(f"📅 **{row['posledni_udalost']}**")
-                        st.caption(f"Kontrolováno: {formatted_time}")
-                    with c4:
-                        st.link_button("Otevřít", row['url'])
-                        
-                        with st.popover("✏️", help="Upravit název"):
-                            novy_nazev = st.text_input("Název kauzy", value=row['oznaceni'], key=f"edit_green_{row['id']}")
-                            if st.button("Uložit", key=f"save_green_{row['id']}"):
-                                prejmenuj_pripad(row['id'], novy_nazev)
-                                st.rerun()
-                                
-                        # POPOVER MAZÁNÍ
-                        with st.popover("🗑️", help="Odstranit spis"):
-                            st.write("Opravdu smazat?")
-                            if st.button("Ano, odstranit", key=f"confirm_del_green_{row['id']}", type="primary"):
-                                akce_smazat(row['id'])
-                                st.rerun() # <--- Tady MUSÍ být rerun
+    # --- OVLÁDÁNÍ STRÁNKOVÁNÍ ---
+    if total_pages > 1:
+        st.markdown("---")
+        c_prev, c_info, c_next = st.columns([1, 2, 1])
+        
+        with c_prev:
+            if st.session_state['page'] > 1:
+                if st.button("⬅️ Předchozí"):
+                    st.session_state['page'] -= 1
+                    st.rerun()
+        
+        with c_info:
+            st.markdown(f"<div style='text-align: center'>Strana <b>{st.session_state['page']}</b> z {total_pages}</div>", unsafe_allow_html=True)
+        
+        with c_next:
+            if st.session_state['page'] < total_pages:
+                if st.button("Další ➡️"):
+                    st.session_state['page'] += 1
+                    st.rerun()
 
 # -------------------------------------------------------------------------
 # STRÁNKA: AUDITNÍ HISTORIE
