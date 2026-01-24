@@ -593,53 +593,57 @@ elif selected_page == "📊 Přehled kauz":
         conn.close()
         return df_result
 
- # --- 2. SIDEBAR ---
+# --- 2. SIDEBAR ---
     with st.sidebar:
         st.header("➕ Přidat nový spis")
+        
+        # --- 🛠️ OPRAVA: MAZÁNÍ POLÍČEK ---
+        # Musíme to udělat TADY NAHOŘE, ještě než se vykreslí inputy.
+        # Pokud jsme v minulém běhu nastavili, že se má mazat, provedeme to teď.
+        if st.session_state.get('smazat_vstupy'):
+            st.session_state.input_url = ""
+            st.session_state.input_nazev = ""
+            st.session_state.smazat_vstupy = False # Vlaječku zase sklopíme
         
         # Vstupy pro URL a Název
         st.text_input("Název kauzy", key="input_nazev")
         st.text_input("URL z Infosoudu", key="input_url")
         
         # --- ZMĚNA ROZLOŽENÍ ---
-        # Vytvoříme dva sloupce vedle sebe:
-        # col_btn (35%) pro tlačítko
-        # col_spin (65%) pro text a spinner
         col_btn, col_spin = st.columns([0.35, 0.65])
         
         with col_btn:
-            # Tlačítko už nemá 'on_click', řešíme to podmínkou 'if' níže
             tlacitko_stisknuto = st.button("Sledovat", help="Přidat případ do sledování", use_container_width=True)
 
         # Logika se provede, když se stiskne tlačítko
         if tlacitko_stisknuto:
-            # Všechno se děje v pravém sloupečku (vedle tlačítka)
             with col_spin:
-                # Text spinneru změněn na váš požadavek
                 with st.spinner("⏳ Přidávám případ..."):
                     
                     # 1. Samotné stahování dat
-                    url = st.session_state.input_url
-                    nazev = st.session_state.input_nazev
-                    ok, msg = pridej_pripad(url, nazev)
+                    # Používáme hodnoty z aktuálního stavu
+                    url_val = st.session_state.input_url
+                    nazev_val = st.session_state.input_nazev
                     
-                    # 2. Pokud to dopadlo dobře, vyčistíme cache UVNITŘ spinneru
-                    # Díky tomu se kolečko točí až do úplného konce operace
+                    ok, msg = pridej_pripad(url_val, nazev_val)
+                    
                     if ok:
+                        # 2. Vyčistíme cache (stále se točí kolečko)
                         st.cache_data.clear()
-                        # Nastavíme zprávu o úspěchu
                         st.session_state['vysledek_akce'] = ("success", msg)
-                        # Vymažeme formulář
-                        st.session_state.input_url = ""
-                        st.session_state.input_nazev = ""
+                        
+                        # 3. DŮLEŽITÉ: Nemažeme inputy přímo tady (to by spadlo),
+                        # ale nastavíme "vlaječku", že se mají smazat při příštím startu.
+                        st.session_state['smazat_vstupy'] = True
                     else:
                         st.session_state['vysledek_akce'] = ("error", msg)
             
-            # 3. Teprve teď, když je vše hotovo a spinner doběhl, restartujeme stránku
+            # 4. Restartujeme aplikaci
+            # (Při novém načtení se nahoře provede ten blok 'if smazat_vstupy' a políčka budou prázdná)
             if ok:
                 st.rerun()
 
-        # Zobrazení hlášky (úspěch/chyba) pod tlačítky
+        # Zobrazení hlášky (úspěch/chyba)
         if 'vysledek_akce' in st.session_state:
             typ, text = st.session_state['vysledek_akce']
             if typ == 'success': st.success(text)
@@ -647,7 +651,8 @@ elif selected_page == "📊 Přehled kauz":
             del st.session_state['vysledek_akce']
         
         st.divider()
-        # ... zbytek sidebaru (tlačítka pro ruční kontrolu atd.) nechte stejný ...
+        
+        # ... Zbytek sidebaru (tlačítka pro ruční kontrolu atd.) ...
         if st.button("🔄 Ruční kontrola"):
             st.write("---")
             status_text = st.empty()
