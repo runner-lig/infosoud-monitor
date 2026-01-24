@@ -593,14 +593,21 @@ elif selected_page == "📊 Přehled kauz":
         conn.close()
         return df_result
 
-    # --- 2. SIDEBAR ---
+ # --- 2. SIDEBAR ---
     with st.sidebar:
         st.header("➕ Přidat nový spis")
         
+        # Funkce se spustí po kliknutí, ale samotnou logiku spinneru dáme přímo do obsluhy
         def zpracuj_pridani():
             url = st.session_state.input_url
             nazev = st.session_state.input_nazev
-            ok, msg = pridej_pripad(url, nazev)
+            
+            # --- ZDE JE TA ZMĚNA: SPINNER ---
+            # Dokud běží funkce pridej_pripad (což chvíli trvá, stahuje data), točí se kolečko.
+            with st.spinner('⏳ Prověřuji spis u soudu...'):
+                ok, msg = pridej_pripad(url, nazev)
+            # --------------------------------
+            
             if ok:
                 st.session_state['vysledek_akce'] = ("success", msg)
                 st.session_state.input_url = ""
@@ -611,6 +618,8 @@ elif selected_page == "📊 Přehled kauz":
 
         st.text_input("Název kauzy", key="input_nazev")
         st.text_input("URL z Infosoudu", key="input_url")
+        
+        # Tlačítko spustí funkci zpracuj_pridani
         st.button("Sledovat případ", on_click=zpracuj_pridani)
         
         if 'vysledek_akce' in st.session_state:
@@ -620,6 +629,7 @@ elif selected_page == "📊 Přehled kauz":
             del st.session_state['vysledek_akce']
         
         st.divider()
+        # ... zbytek sidebaru (tlačítka pro ruční kontrolu atd.) nechte stejný ...
         if st.button("🔄 Ruční kontrola"):
             st.write("---")
             status_text = st.empty()
