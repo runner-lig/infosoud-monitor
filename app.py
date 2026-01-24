@@ -495,7 +495,7 @@ def prejmenuj_pripad(cid, novy_nazev):
 def start_scheduler():
     scheduler = BackgroundScheduler()
     # ZMĚNA: Trigger cron, spouští se každou hodinu v XX:36
-    scheduler.add_job(monitor_job, 'cron', minute=36)
+    scheduler.add_job(monitor_job, 'cron', minute=40)
     scheduler.start()
     return scheduler
 
