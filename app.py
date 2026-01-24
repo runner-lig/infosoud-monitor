@@ -589,7 +589,7 @@ elif selected_page == "📊 Přehled kauz":
     @st.cache_data(ttl=300)
     def get_pripady_data():
         conn = get_connection()
-        df_result = pd.read_sql_query("SELECT * FROM pripady ORDER BY posledni_kontrola DESC", conn)
+        df_result = pd.read_sql_query("SELECT * FROM pripady ORDER BY id DESC", conn)
         conn.close()
         return df_result
 
