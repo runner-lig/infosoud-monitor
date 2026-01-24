@@ -698,6 +698,8 @@ elif selected_page == "📊 Přehled kauz":
              finally:
                  conn.close()
 
+# ... (horní část s funkcemi cache a sidebarem zůstává stejná) ...
+
     # --- 3. HLAVNÍ VÝPIS KAUZ ---
     df = get_pripady_data()
     
@@ -748,10 +750,9 @@ elif selected_page == "📊 Přehled kauz":
                         st.write(f"📅 **{row['posledni_udalost']}**")
                         st.caption(f"Kontrolováno: {formatted_time}")
                     with c4:
-                        # Tlačítka akcí
                         st.link_button("Otevřít", row['url'])
                         
-                        # NOVÉ: Tlačítko EDITOVAT (vyskakovací okénko)
+                        # Editace
                         with st.popover("✏️", help="Upravit název"):
                             novy_nazev = st.text_input("Název kauzy", value=row['oznaceni'], key=f"edit_red_{row['id']}")
                             if st.button("Uložit", key=f"save_red_{row['id']}"):
@@ -760,7 +761,14 @@ elif selected_page == "📊 Přehled kauz":
                                 st.rerun()
 
                         st.button("👁️ Viděl", key=f"seen_{row['id']}", on_click=akce_videl_jsem, args=(row['id'],))
-                        st.button("🗑️", key=f"del_{row['id']}", help="Smazat", on_click=akce_smazat, args=(row['id'],))
+                        
+                        # --- ZMĚNA: MAZÁNÍ S POTVRZENÍM (POPOVER) ---
+                        with st.popover("🗑️", help="Odstranit spis"):
+                            st.write("Opravdu smazat?")
+                            if st.button("Ano, odstranit", key=f"confirm_del_red_{row['id']}", type="primary"):
+                                akce_smazat(row['id'])
+                                st.rerun()
+                        # ---------------------------------------------
 
         # --- B) ZELENÁ SEKCE (BEZ ZMĚN) ---
         if not df_ostatni.empty:
@@ -790,7 +798,7 @@ elif selected_page == "📊 Přehled kauz":
                     with c4:
                         st.link_button("Otevřít", row['url'])
                         
-                        # NOVÉ: Tlačítko EDITOVAT (vyskakovací okénko)
+                        # Editace
                         with st.popover("✏️", help="Upravit název"):
                             novy_nazev = st.text_input("Název kauzy", value=row['oznaceni'], key=f"edit_green_{row['id']}")
                             if st.button("Uložit", key=f"save_green_{row['id']}"):
@@ -798,7 +806,13 @@ elif selected_page == "📊 Přehled kauz":
                                 st.cache_data.clear()
                                 st.rerun()
                                 
-                        st.button("🗑️", key=f"del_{row['id']}", help="Smazat", on_click=akce_smazat, args=(row['id'],))
+                        # --- ZMĚNA: MAZÁNÍ S POTVRZENÍM (POPOVER) ---
+                        with st.popover("🗑️", help="Odstranit spis"):
+                            st.write("Opravdu smazat?")
+                            if st.button("Ano, odstranit", key=f"confirm_del_green_{row['id']}", type="primary"):
+                                akce_smazat(row['id'])
+                                st.rerun()
+                        # ---------------------------------------------
 
 # -------------------------------------------------------------------------
 # STRÁNKA: AUDITNÍ HISTORIE
