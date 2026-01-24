@@ -69,7 +69,7 @@ def get_db_connection():
     else:
         raise Exception("DB Pool není inicializován.")
 
-# --- 🍪 SPRÁVCE COOKIES (BEZ CACHE) ---
+# --- 🍪 SPRÁVCE COOKIES ---
 def get_cookie_manager():
     return stx.CookieManager(key="cookie_mgr")
 
@@ -394,7 +394,7 @@ def pridej_pripad(url, oznaceni):
     data = stahni_data_z_infosoudu(p)
     if data is None: return False, "Spis nenalezen."
     
-    # --- ZMĚNA 1/4: Formátování s mezerami pro ukládání do DB (log) ---
+    # Formátování s mezerami pro ukládání do DB (log)
     spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
     
     conn = None; db_pool = None
@@ -513,7 +513,7 @@ def monitor_job(status_placeholder=None, progress_bar=None):
                         conn.commit()
                     except: pass
                     
-                    # --- ZMĚNA 2/4: Formátování s mezerami pro e-mail ---
+                    # Formátování s mezerami pro e-mail
                     spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
                     
                     odeslat_email_notifikaci(name, new_data[-1], spis_zn)
@@ -674,15 +674,27 @@ elif selected_page == "📊 Přehled kauz":
         finally: 
             if conn and db_pool: db_pool.putconn(conn)
 
+    # --- 🔍 ROZŠÍŘENÉ HLEDÁNÍ (NÁZEV, ZNAČKA, SOUD, TEXT) ---
     def get_green_cases(search_query="", page=1, limit=50):
         conn = None; db_pool = None
         try:
             conn, db_pool = get_db_connection()
             offset = (page - 1) * limit
             if search_query:
-                query = "SELECT * FROM pripady WHERE ma_zmenu = FALSE AND (oznaceni ILIKE %s OR params_json ILIKE %s) ORDER BY id DESC LIMIT %s OFFSET %s"
+                # Hledáme v: oznaceni, params_json (spis. značka), realny_nazev_soudu, posledni_udalost
+                query = """
+                    SELECT * FROM pripady 
+                    WHERE ma_zmenu = FALSE 
+                    AND (
+                        oznaceni ILIKE %s OR 
+                        params_json ILIKE %s OR 
+                        realny_nazev_soudu ILIKE %s OR
+                        posledni_udalost ILIKE %s
+                    )
+                    ORDER BY id DESC LIMIT %s OFFSET %s
+                """
                 like_q = f"%{search_query}%"
-                return pd.read_sql_query(query, conn, params=(like_q, like_q, limit, offset))
+                return pd.read_sql_query(query, conn, params=(like_q, like_q, like_q, like_q, limit, offset))
             else:
                 query = "SELECT * FROM pripady WHERE ma_zmenu = FALSE ORDER BY id DESC LIMIT %s OFFSET %s"
                 return pd.read_sql_query(query, conn, params=(limit, offset))
@@ -697,7 +709,17 @@ elif selected_page == "📊 Přehled kauz":
             c = conn.cursor()
             if search_query:
                 like_q = f"%{search_query}%"
-                c.execute("SELECT COUNT(*) FROM pripady WHERE ma_zmenu = FALSE AND (oznaceni ILIKE %s OR params_json ILIKE %s)", (like_q, like_q))
+                query = """
+                    SELECT COUNT(*) FROM pripady 
+                    WHERE ma_zmenu = FALSE 
+                    AND (
+                        oznaceni ILIKE %s OR 
+                        params_json ILIKE %s OR 
+                        realny_nazev_soudu ILIKE %s OR
+                        posledni_udalost ILIKE %s
+                    )
+                """
+                c.execute(query, (like_q, like_q, like_q, like_q))
             else:
                 c.execute("SELECT COUNT(*) FROM pripady WHERE ma_zmenu = FALSE")
             return c.fetchone()[0]
@@ -757,18 +779,34 @@ elif selected_page == "📊 Přehled kauz":
     # --- HLAVNÍ VÝPIS KAUZ ---
     df_zmeny = get_zmeny_all()
 
-    search_query = st.text_input("🔍 Vyhledat v archivu (Název nebo značka)", placeholder="Hledat...")
-    
-    if 'last_search' not in st.session_state: st.session_state['last_search'] = ""
-    if search_query != st.session_state['last_search']:
-        st.session_state['page'] = 1
-        st.session_state['last_search'] = search_query
+    # --- NOVÉ VYHLEDÁVACÍ POLE S TLAČÍTKEM ---
+    c_search_input, c_search_btn = st.columns([4, 1])
+    with c_search_input:
+        search_query_input = st.text_input("Hledat v archivu (Název, značka, soud, text)", 
+                                           label_visibility="collapsed", 
+                                           placeholder="🔍 Hledat v archivu...")
+    with c_search_btn:
+        search_clicked = st.button("🔍 Hledat", use_container_width=True)
 
-    total_green = get_green_count(search_query)
+    # Logika pro hledání (uložení do session_state)
+    if 'last_search' not in st.session_state: st.session_state['last_search'] = ""
+    
+    # Pokud se kliklo na tlačítko nebo se změnil text a stiskl Enter
+    if search_clicked or search_query_input != st.session_state['last_search']:
+        st.session_state['page'] = 1
+        st.session_state['last_search'] = search_query_input
+        # Pokud bylo kliknuto na tlačítko, vynutíme rerun, aby se načetla nová data
+        if search_clicked:
+            st.rerun()
+
+    # Použijeme hodnotu ze session_state pro query
+    active_search_query = st.session_state['last_search']
+
+    total_green = get_green_count(active_search_query)
     total_pages = math.ceil(total_green / ITEMS_PER_PAGE)
     if total_pages < 1: total_pages = 1
     
-    df_ostatni = get_green_cases(search_query, st.session_state['page'], ITEMS_PER_PAGE)
+    df_ostatni = get_green_cases(active_search_query, st.session_state['page'], ITEMS_PER_PAGE)
 
     def akce_videl_jsem(id_spisu):
         resetuj_upozorneni(id_spisu)
@@ -788,7 +826,7 @@ elif selected_page == "📊 Přehled kauz":
         for index, row in df_zmeny.iterrows():
             try:
                 p = json.loads(row['params_json'])
-                # --- ZMĚNA 3/4: Formátování s mezerami pro zobrazení (červené) ---
+                # Formátování s mezerami pro zobrazení (červené)
                 spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
                 
                 kod_soudu = p.get('soud')
@@ -825,7 +863,10 @@ elif selected_page == "📊 Přehled kauz":
     # --- B) ZELENÁ SEKCE ---
     if not df_zmeny.empty: st.markdown("---")
     
-    st.subheader(f"✅ Případy beze změn (Celkem: {total_green})")
+    if active_search_query:
+        st.subheader(f"🔍 Výsledky hledání: '{active_search_query}' (Nalezeno: {total_green})")
+    else:
+        st.subheader(f"✅ Případy beze změn (Celkem: {total_green})")
     
     if df_ostatni.empty:
         st.info("Žádné případy nenalezeny.")
@@ -833,7 +874,7 @@ elif selected_page == "📊 Přehled kauz":
         for index, row in df_ostatni.iterrows():
             try:
                 p = json.loads(row['params_json'])
-                # --- ZMĚNA 4/4: Formátování s mezerami pro zobrazení (zelené) ---
+                # Formátování s mezerami pro zobrazení (zelené)
                 spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
                 
                 kod_soudu = p.get('soud')
