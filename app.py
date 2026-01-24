@@ -69,9 +69,10 @@ def get_db_connection():
     else:
         raise Exception("DB Pool není inicializován.")
 
-# --- 🍪 SPRÁVCE COOKIES (OPRAVENO - BEZ DEKORÁTORU) ---
+# --- 🍪 SPRÁVCE COOKIES (BEZ CACHE DEKORÁTORU) ---
 def get_cookie_manager():
-    return stx.CookieManager()
+    # Nastavíme unikátní klíč, aby se komponenta neresetovala
+    return stx.CookieManager(key="cookie_mgr")
 
 cookie_manager = get_cookie_manager()
 
@@ -171,7 +172,7 @@ def init_db():
 
 init_db()
 
-# --- SPRÁVA UŽIVATELŮ (VRÁCENO A UPRAVENO PRO POOL) ---
+# --- SPRÁVA UŽIVATELŮ ---
 
 def create_user(username, password, email, role):
     conn = None; db_pool = None
@@ -529,7 +530,7 @@ def monitor_job(status_placeholder=None, progress_bar=None):
 start_scheduler()
 
 # -------------------------------------------------------------------------
-# 4. FRONTEND A PŘIHLÁŠENÍ (S COOKIES)
+# 4. FRONTEND A PŘIHLÁŠENÍ (S ANTI-FLICKER LOGIKOU)
 # -------------------------------------------------------------------------
 
 if 'logged_in' not in st.session_state:
@@ -537,8 +538,18 @@ if 'logged_in' not in st.session_state:
     st.session_state['current_user'] = None
     st.session_state['user_role'] = None
 
-# Automatické přihlášení z Cookies
+# --- ZKUSÍME AUTOMATICKÉ PŘIHLÁŠENÍ Z COOKIES ---
 if not st.session_state['logged_in']:
+    
+    # 🛠️ ANTI-FLICKER: Při úplně prvním načtení stránky (po F5)
+    # nemáme cookie načtenou. Aby neprobliklo přihlášení,
+    # ukážeme spinner a vynutíme obnovení, dokud se cookie nenačte.
+    if 'cookie_initialized' not in st.session_state:
+        with st.spinner("Načítám aplikaci..."):
+            st.session_state['cookie_initialized'] = True
+            time.sleep(0.3) # Dáme čas komponentě, aby se načetla
+            st.rerun()      # Restart, aby si Python "sáhl" pro cookie
+
     try:
         cookie_user = cookie_manager.get(cookie="infosoud_user")
         if cookie_user:
@@ -547,6 +558,7 @@ if not st.session_state['logged_in']:
                 st.session_state['logged_in'] = True
                 st.session_state['current_user'] = cookie_user
                 st.session_state['user_role'] = role
+                st.rerun() # Okamžitý restart po úspěšném přihlášení
     except: pass
 
 if not st.session_state['logged_in']:
@@ -595,7 +607,7 @@ selected_page = st.sidebar.radio("Menu", menu_options)
 st.sidebar.markdown("---")
 
 # -------------------------------------------------------------------------
-# STRÁNKA: SPRÁVA UŽIVATELŮ (VRAZENO ZPĚT!)
+# STRÁNKA: SPRÁVA UŽIVATELŮ
 # -------------------------------------------------------------------------
 if selected_page == "👥 Správa uživatelů":
     st.header("👥 Správa uživatelů")
