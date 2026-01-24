@@ -633,8 +633,8 @@ elif selected_page == "📊 Přehled kauz":
                     
                     # Pokud to bylo rychlejší než 15s, dospíme zbytek
                     # Tím zajistíme, že kolečko se točí minimálně 15 vteřin v kuse
-                    if trvani < 15:
-                        time.sleep(15 - trvani)
+                    if trvani < 10:
+                        time.sleep(10 - trvani)
                     
                     # D) Zpracování výsledku
                     if ok:
