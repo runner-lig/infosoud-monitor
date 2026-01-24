@@ -71,7 +71,7 @@ def get_db_connection():
 
 # --- 🍪 SPRÁVCE COOKIES (NOVÉ) ---
 # Tuto funkci použijeme pro práci s cookies
-@st.cache_resource(experimental_allow_widgets=True)
+@st.cache_resource
 def get_cookie_manager():
     return stx.CookieManager()
 
