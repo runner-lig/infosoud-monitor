@@ -1,6 +1,6 @@
 import streamlit as st
 import psycopg2
-from psycopg2 import pool  # <--- DŮLEŽITÉ: Import pro pooling
+from psycopg2 import pool  # Import pro pooling
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -22,11 +22,9 @@ st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wi
 
 # --- 🔐 NAČTENÍ TAJNÝCH ÚDAJŮ (SECRETS) ---
 def get_secret(key):
-    # 1. Railway Variables
     value = os.getenv(key)
     if value is not None:
         return value
-    # 2. Lokální secrets.toml
     try:
         if hasattr(st, "secrets") and key in st.secrets:
             return st.secrets[key]
@@ -36,7 +34,6 @@ def get_secret(key):
 
 try:
     DB_URI = get_secret("SUPABASE_DB_URL")
-    
     SUPER_ADMIN_USER = get_secret("SUPER_ADMIN_USER")
     SUPER_ADMIN_PASS = get_secret("SUPER_ADMIN_PASS")
     SUPER_ADMIN_EMAIL = get_secret("SUPER_ADMIN_EMAIL")
@@ -55,18 +52,14 @@ except Exception as e:
     st.stop()
 
 # --- 🏗️ DATABÁZOVÝ POOL (PROFI ŘEŠENÍ) ---
-# Vytvoříme bazén připojení, který se vytvoří jen jednou a sdílí se.
 @st.cache_resource
 def init_connection_pool():
     try:
-        # Vytvoříme pool s min 1 a max 10 připojeními
         return psycopg2.pool.SimpleConnectionPool(1, 10, dsn=DB_URI)
     except Exception as e:
         st.error(f"Nepodařilo se vytvořit DB Pool: {e}")
         return None
 
-# Pomocná funkce pro bezpečné získání a vrácení připojení
-# Použití: s připojením pracujeme, a ve 'finally' ho vrátíme.
 def get_db_connection():
     db_pool = init_connection_pool()
     if db_pool:
@@ -117,7 +110,7 @@ SOUDY_MAPA = {
 }
 
 # -------------------------------------------------------------------------
-# 1. INITIALIZACE DATABÁZE (S POUŽITÍM POOLU)
+# 1. INITIALIZACE DATABÁZE
 # -------------------------------------------------------------------------
 
 def make_hash(password):
@@ -130,11 +123,10 @@ def check_hash(password, hashed_text):
 
 @st.cache_resource
 def init_db():
-    """Inicializace tabulek v PostgreSQL."""
     conn = None
     db_pool = None
     try:
-        conn, db_pool = get_db_connection() # Půjčíme si připojení
+        conn, db_pool = get_db_connection()
         c = conn.cursor()
         
         c.execute('''CREATE TABLE IF NOT EXISTS pripady
@@ -167,14 +159,11 @@ def init_db():
         st.error(f"Chyba při inicializaci DB: {e}")
         st.stop()
     finally:
-        # DŮLEŽITÉ: Vrátit připojení do poolu
-        if conn and db_pool:
-            db_pool.putconn(conn)
+        if conn and db_pool: db_pool.putconn(conn)
 
-# Spustit init
 init_db()
 
-# --- SPRÁVA UŽIVATELŮ (PŘEPSÁNO NA POOL) ---
+# --- SPRÁVA UŽIVATELŮ ---
 
 def create_user(username, password, email, role):
     conn = None
@@ -247,7 +236,7 @@ def verify_login(username, password):
     
     return role
 
-# --- LOGOVÁNÍ (PŘEPSÁNO NA POOL) ---
+# --- LOGOVÁNÍ ---
 
 def log_do_historie(akce, popis):
     if 'current_user' in st.session_state:
@@ -283,7 +272,7 @@ def get_historie(dny=14):
         if conn and db_pool: db_pool.putconn(conn)
 
 # -------------------------------------------------------------------------
-# 2. LOGIKA ODESÍLÁNÍ (PŘEPSÁNO NA POOL)
+# 2. LOGIKA ODESÍLÁNÍ
 # -------------------------------------------------------------------------
 
 def odeslat_email_notifikaci(nazev, udalost, znacka):
@@ -484,11 +473,9 @@ def start_scheduler():
     return scheduler
 
 def monitor_job(status_placeholder=None, progress_bar=None):
-    # Pro scheduler musíme zajistit připojení bezpečně
     conn = None
     db_pool = None
     try:
-        # Tady si půjčíme připojení z poolu
         conn, db_pool = get_db_connection()
         c = conn.cursor()
         c.execute("SELECT id, params_json, pocet_udalosti, oznaceni FROM pripady")
@@ -515,8 +502,6 @@ def monitor_job(status_placeholder=None, progress_bar=None):
                     c.execute("UPDATE pripady SET pocet_udalosti=%s, posledni_udalost=%s, ma_zmenu=%s, posledni_kontrola=%s WHERE id=%s", 
                               (len(new_data), new_data[-1], True, now, cid))
                     conn.commit()
-                    # Logování (bez nutnosti otevírat nové spojení, pokud to jde, ale tady voláme funkci která si ho otevře... to je ok)
-                    # Pro zjednodušení logujeme přímo přes SQL tady:
                     try:
                         c.execute("INSERT INTO historie (datum, uzivatel, akce, popis) VALUES (%s, %s, %s, %s)",
                                   (now, "🤖 Systém (Robot)", "Nová událost", f"Změna u {name}"))
@@ -532,7 +517,6 @@ def monitor_job(status_placeholder=None, progress_bar=None):
     except Exception as e:
         print(f"Chyba scheduleru: {e}")
     finally:
-        # Vrátit připojení do poolu
         if conn and db_pool: db_pool.putconn(conn)
 
 start_scheduler()
@@ -636,13 +620,11 @@ if selected_page == "👥 Správa uživatelů":
 elif selected_page == "📊 Přehled kauz":
     
     # --- 1. FUNKCE PRO NAČÍTÁNÍ DAT S PAMĚTÍ ---
-    # Upraveno pro pool
     def get_pripady_data():
         conn = None
         db_pool = None
         try:
             conn, db_pool = get_db_connection()
-            # Řazení DESC podle ID (nejnovější nahoře)
             df_result = pd.read_sql_query("SELECT * FROM pripady ORDER BY id DESC", conn)
             return df_result
         except Exception:
@@ -676,13 +658,12 @@ elif selected_page == "📊 Přehled kauz":
                 nazev_val = st.session_state.input_nazev
                 ok, msg = pridej_pripad(url_val, nazev_val)
                 
-                # ZÁRUKA 10 VTEŘIN
                 trvani = time.time() - zacatek
                 if trvani < 10:
                     time.sleep(10 - trvani)
                 
                 if ok:
-                    st.cache_data.clear() # Vymazání cache je stále nutné, ale už nemáme @cache_data u get_pripady_data pro pool
+                    st.cache_data.clear()
                     st.session_state['vysledek_akce'] = ("success", msg)
                     st.session_state['smazat_vstupy'] = True
                 else:
@@ -744,17 +725,18 @@ elif selected_page == "📊 Přehled kauz":
         df_zmeny = df[df['ma_zmenu'] == True]
         df_ostatni = df[df['ma_zmenu'] == False]
 
+        # --- 🛠️ OPRAVA: ZDE JSME SMAZALI st.rerun() z callbacků ---
         def akce_videl_jsem(id_spisu):
             resetuj_upozorneni(id_spisu)
-            st.rerun() # Refresh místo clear cache
+            # ZDE NENÍ st.rerun() - Streamlit to udělá sám po doběhnutí
 
         def akce_smazat(id_spisu):
             smaz_pripad(id_spisu)
-            st.rerun()
+            # Tady st.rerun() nevadí, ale není nutný, pokud ho voláme z tlačítka
             
         def akce_videl_jsem_vse():
             resetuj_vsechna_upozorneni()
-            st.rerun()
+            # ZDE TAKÉ NENÍ st.rerun()
 
         # --- A) ČERVENÁ SEKCE ---
         if not df_zmeny.empty:
@@ -792,13 +774,15 @@ elif selected_page == "📊 Přehled kauz":
                                 prejmenuj_pripad(row['id'], novy_nazev)
                                 st.rerun()
 
+                        # Tlačítko pro "Viděl jsem" - používá callback on_click
                         st.button("👁️ Viděl", key=f"seen_{row['id']}", on_click=akce_videl_jsem, args=(row['id'],))
                         
-                        # POPOVER MAZÁNÍ
+                        # POPOVER MAZÁNÍ - Tady st.rerun() potřebujeme, protože to NENÍ callback, ale podmínka
                         with st.popover("🗑️", help="Odstranit spis"):
                             st.write("Opravdu smazat?")
                             if st.button("Ano, odstranit", key=f"confirm_del_red_{row['id']}", type="primary"):
                                 akce_smazat(row['id'])
+                                st.rerun() # <--- Tady MUSÍ být rerun
 
         # --- B) ZELENÁ SEKCE ---
         if not df_ostatni.empty:
@@ -839,6 +823,7 @@ elif selected_page == "📊 Přehled kauz":
                             st.write("Opravdu smazat?")
                             if st.button("Ano, odstranit", key=f"confirm_del_green_{row['id']}", type="primary"):
                                 akce_smazat(row['id'])
+                                st.rerun() # <--- Tady MUSÍ být rerun
 
 # -------------------------------------------------------------------------
 # STRÁNKA: AUDITNÍ HISTORIE
