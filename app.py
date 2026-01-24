@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from apscheduler.schedulers.background import BackgroundScheduler
-import extra_streamlit_components as stx  # <--- NOVÁ KNIHOVNA PRO COOKIES
+import extra_streamlit_components as stx
 
 # --- KONFIGURACE UI ---
 st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
@@ -69,8 +69,7 @@ def get_db_connection():
     else:
         raise Exception("DB Pool není inicializován.")
 
-# --- 🍪 SPRÁVCE COOKIES (NOVÉ) ---
-# Tuto funkci použijeme pro práci s cookies
+# --- 🍪 SPRÁVCE COOKIES (OPRAVENO - BEZ DEKORÁTORU) ---
 def get_cookie_manager():
     return stx.CookieManager()
 
@@ -172,11 +171,10 @@ def init_db():
 
 init_db()
 
-# --- SPRÁVA UŽIVATELŮ ---
+# --- SPRÁVA UŽIVATELŮ (VRÁCENO A UPRAVENO PRO POOL) ---
 
 def create_user(username, password, email, role):
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
@@ -196,8 +194,7 @@ def create_user(username, password, email, role):
         if conn and db_pool: db_pool.putconn(conn)
 
 def delete_user(username):
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
@@ -210,8 +207,7 @@ def delete_user(username):
         if conn and db_pool: db_pool.putconn(conn)
 
 def get_all_users():
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         df = pd.read_sql_query("SELECT username, email, role FROM uzivatele", conn)
@@ -223,10 +219,9 @@ def get_all_users():
 
 def verify_login(username, password):
     if username == SUPER_ADMIN_USER and password == SUPER_ADMIN_PASS:
-        return "Super Admin", None
+        return "Super Admin"
     
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     role = None
     try:
         conn, db_pool = get_db_connection()
@@ -245,13 +240,9 @@ def verify_login(username, password):
     
     return role
 
-# Funkce pro ověření role jen podle jména (z cookie)
 def get_user_role(username):
-    if username == SUPER_ADMIN_USER:
-        return "Super Admin"
-    
-    conn = None; db_pool = None
-    role = None
+    if username == SUPER_ADMIN_USER: return "Super Admin"
+    conn = None; db_pool = None; role = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
@@ -305,16 +296,12 @@ def get_historie(dny=14):
 def odeslat_email_notifikaci(nazev, udalost, znacka):
     if "novy.email" in SMTP_EMAIL: return
 
-    conn = None
-    db_pool = None
-    prijemci = []
-    
+    conn = None; db_pool = None; prijemci = []
     try:
         conn, db_pool = get_db_connection()
         df_users = pd.read_sql_query("SELECT email FROM uzivatele WHERE email IS NOT NULL AND email != ''", conn)
         prijemci = df_users['email'].tolist()
-    except:
-        prijemci = []
+    except: prijemci = []
     finally:
         if conn and db_pool: db_pool.putconn(conn)
     
@@ -412,8 +399,7 @@ def pridej_pripad(url, oznaceni):
     
     spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
     
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
@@ -429,8 +415,7 @@ def pridej_pripad(url, oznaceni):
         if conn and db_pool: db_pool.putconn(conn)
 
 def smaz_pripad(cid):
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
@@ -446,8 +431,7 @@ def smaz_pripad(cid):
         if conn and db_pool: db_pool.putconn(conn)
 
 def resetuj_upozorneni(cid):
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
@@ -463,8 +447,7 @@ def resetuj_upozorneni(cid):
         if conn and db_pool: db_pool.putconn(conn)
 
 def resetuj_vsechna_upozorneni():
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
@@ -477,8 +460,7 @@ def resetuj_vsechna_upozorneni():
         if conn and db_pool: db_pool.putconn(conn)
 
 def prejmenuj_pripad(cid, novy_nazev):
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
@@ -499,8 +481,7 @@ def start_scheduler():
     return scheduler
 
 def monitor_job(status_placeholder=None, progress_bar=None):
-    conn = None
-    db_pool = None
+    conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
@@ -556,12 +537,11 @@ if 'logged_in' not in st.session_state:
     st.session_state['current_user'] = None
     st.session_state['user_role'] = None
 
-# --- ZKUSÍME AUTOMATICKÉ PŘIHLÁŠENÍ Z COOKIES ---
+# Automatické přihlášení z Cookies
 if not st.session_state['logged_in']:
     try:
         cookie_user = cookie_manager.get(cookie="infosoud_user")
         if cookie_user:
-            # Rychlá kontrola, zda uživatel stále existuje (bez hesla, jen role)
             role = get_user_role(cookie_user)
             if role:
                 st.session_state['logged_in'] = True
@@ -584,10 +564,7 @@ if not st.session_state['logged_in']:
                     st.session_state['logged_in'] = True
                     st.session_state['current_user'] = username
                     st.session_state['user_role'] = role
-                    
-                    # ULOŽENÍ COOKIE (PLATNOST 7 DNÍ)
                     cookie_manager.set("infosoud_user", username, expires_at=datetime.datetime.now() + datetime.timedelta(days=7))
-                    
                     st.success(f"Vítejte, {username} ({role})")
                     time.sleep(1)
                     st.rerun()
@@ -604,7 +581,6 @@ with st.sidebar:
     st.caption(f"Role: {st.session_state['user_role']}")
     
     if st.button("Odhlásit se"):
-        # SMAZÁNÍ COOKIE A ODHLÁŠENÍ
         cookie_manager.delete("infosoud_user")
         st.session_state['logged_in'] = False
         st.rerun()
@@ -619,7 +595,7 @@ selected_page = st.sidebar.radio("Menu", menu_options)
 st.sidebar.markdown("---")
 
 # -------------------------------------------------------------------------
-# STRÁNKA: SPRÁVA UŽIVATELŮ
+# STRÁNKA: SPRÁVA UŽIVATELŮ (VRAZENO ZPĚT!)
 # -------------------------------------------------------------------------
 if selected_page == "👥 Správa uživatelů":
     st.header("👥 Správa uživatelů")
@@ -670,7 +646,7 @@ elif selected_page == "📊 Přehled kauz":
     if 'page' not in st.session_state:
         st.session_state['page'] = 1
 
-    # --- 1. FUNKCE PRO NAČÍTÁNÍ DAT ---
+    # --- FUNKCE PRO NAČÍTÁNÍ DAT ---
     def get_zmeny_all():
         conn = None; db_pool = None
         try:
@@ -685,14 +661,8 @@ elif selected_page == "📊 Přehled kauz":
         try:
             conn, db_pool = get_db_connection()
             offset = (page - 1) * limit
-            
             if search_query:
-                query = """
-                    SELECT * FROM pripady 
-                    WHERE ma_zmenu = FALSE 
-                    AND (oznaceni ILIKE %s OR params_json ILIKE %s)
-                    ORDER BY id DESC LIMIT %s OFFSET %s
-                """
+                query = "SELECT * FROM pripady WHERE ma_zmenu = FALSE AND (oznaceni ILIKE %s OR params_json ILIKE %s) ORDER BY id DESC LIMIT %s OFFSET %s"
                 like_q = f"%{search_query}%"
                 return pd.read_sql_query(query, conn, params=(like_q, like_q, limit, offset))
             else:
@@ -717,7 +687,7 @@ elif selected_page == "📊 Přehled kauz":
         finally: 
             if conn and db_pool: db_pool.putconn(conn)
 
-    # --- 2. SIDEBAR ---
+    # --- SIDEBAR ---
     with st.sidebar:
         st.header("➕ Přidat nový spis")
         
@@ -766,8 +736,7 @@ elif selected_page == "📊 Přehled kauz":
             st.rerun()
         st.divider()
 
-    # --- 3. HLAVNÍ VÝPIS KAUZ ---
-    
+    # --- HLAVNÍ VÝPIS KAUZ ---
     df_zmeny = get_zmeny_all()
 
     search_query = st.text_input("🔍 Vyhledat v archivu (Název nebo značka)", placeholder="Hledat...")
