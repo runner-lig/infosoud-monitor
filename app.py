@@ -1,6 +1,6 @@
 import streamlit as st
 import psycopg2
-from psycopg2 import pool  # Import pro pooling
+from psycopg2 import pool
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -12,11 +12,12 @@ import time
 import random
 import datetime
 import os
-import math # Pro výpočet stránek
+import math
 from urllib.parse import urlparse, parse_qs
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from apscheduler.schedulers.background import BackgroundScheduler
+import extra_streamlit_components as stx  # <--- NOVÁ KNIHOVNA PRO COOKIES
 
 # --- KONFIGURACE UI ---
 st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
@@ -52,7 +53,7 @@ except Exception as e:
     st.error(f"Kritická chyba konfigurace: {e}")
     st.stop()
 
-# --- 🏗️ DATABÁZOVÝ POOL (PROFI ŘEŠENÍ) ---
+# --- 🏗️ DATABÁZOVÝ POOL ---
 @st.cache_resource
 def init_connection_pool():
     try:
@@ -67,6 +68,14 @@ def get_db_connection():
         return db_pool.getconn(), db_pool
     else:
         raise Exception("DB Pool není inicializován.")
+
+# --- 🍪 SPRÁVCE COOKIES (NOVÉ) ---
+# Tuto funkci použijeme pro práci s cookies
+@st.cache_resource(experimental_allow_widgets=True)
+def get_cookie_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_cookie_manager()
 
 # --- KOMPLETNÍ DATABÁZE SOUDŮ ---
 SOUDY_MAPA = {
@@ -215,7 +224,7 @@ def get_all_users():
 
 def verify_login(username, password):
     if username == SUPER_ADMIN_USER and password == SUPER_ADMIN_PASS:
-        return "Super Admin"
+        return "Super Admin", None
     
     conn = None
     db_pool = None
@@ -235,6 +244,24 @@ def verify_login(username, password):
     finally:
         if conn and db_pool: db_pool.putconn(conn)
     
+    return role
+
+# Funkce pro ověření role jen podle jména (z cookie)
+def get_user_role(username):
+    if username == SUPER_ADMIN_USER:
+        return "Super Admin"
+    
+    conn = None; db_pool = None
+    role = None
+    try:
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT role FROM uzivatele WHERE username=%s", (username,))
+        data = c.fetchone()
+        if data: role = data[0]
+    except: pass
+    finally: 
+        if conn and db_pool: db_pool.putconn(conn)
     return role
 
 # --- LOGOVÁNÍ ---
@@ -522,13 +549,26 @@ def monitor_job(status_placeholder=None, progress_bar=None):
 start_scheduler()
 
 # -------------------------------------------------------------------------
-# 4. FRONTEND
+# 4. FRONTEND A PŘIHLÁŠENÍ (S COOKIES)
 # -------------------------------------------------------------------------
 
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
     st.session_state['current_user'] = None
     st.session_state['user_role'] = None
+
+# --- ZKUSÍME AUTOMATICKÉ PŘIHLÁŠENÍ Z COOKIES ---
+if not st.session_state['logged_in']:
+    try:
+        cookie_user = cookie_manager.get(cookie="infosoud_user")
+        if cookie_user:
+            # Rychlá kontrola, zda uživatel stále existuje (bez hesla, jen role)
+            role = get_user_role(cookie_user)
+            if role:
+                st.session_state['logged_in'] = True
+                st.session_state['current_user'] = cookie_user
+                st.session_state['user_role'] = role
+    except: pass
 
 if not st.session_state['logged_in']:
     col1, col2, col3 = st.columns([1,2,1])
@@ -545,6 +585,10 @@ if not st.session_state['logged_in']:
                     st.session_state['logged_in'] = True
                     st.session_state['current_user'] = username
                     st.session_state['user_role'] = role
+                    
+                    # ULOŽENÍ COOKIE (PLATNOST 7 DNÍ)
+                    cookie_manager.set("infosoud_user", username, expires_at=datetime.datetime.now() + datetime.timedelta(days=7))
+                    
                     st.success(f"Vítejte, {username} ({role})")
                     time.sleep(1)
                     st.rerun()
@@ -559,9 +603,13 @@ st.title("⚖️ Monitor Soudních Spisů")
 with st.sidebar:
     st.write(f"👤 **{st.session_state['current_user']}**")
     st.caption(f"Role: {st.session_state['user_role']}")
+    
     if st.button("Odhlásit se"):
+        # SMAZÁNÍ COOKIE A ODHLÁŠENÍ
+        cookie_manager.delete("infosoud_user")
         st.session_state['logged_in'] = False
         st.rerun()
+        
     st.markdown("---")
 
 menu_options = ["📊 Přehled kauz", "📜 Auditní historie"]
@@ -619,14 +667,12 @@ if selected_page == "👥 Správa uživatelů":
 # -------------------------------------------------------------------------
 elif selected_page == "📊 Přehled kauz":
     
-    # Nastavení stránkování
     ITEMS_PER_PAGE = 50
     if 'page' not in st.session_state:
         st.session_state['page'] = 1
 
-    # --- 1. FUNKCE PRO NAČÍTÁNÍ DAT (S FILTREM A STRÁNKOVÁNÍM) ---
+    # --- 1. FUNKCE PRO NAČÍTÁNÍ DAT ---
     def get_zmeny_all():
-        """Načte VŠECHNY případy se změnou (červené). Ty nebudeme stránkovat."""
         conn = None; db_pool = None
         try:
             conn, db_pool = get_db_connection()
@@ -636,14 +682,12 @@ elif selected_page == "📊 Přehled kauz":
             if conn and db_pool: db_pool.putconn(conn)
 
     def get_green_cases(search_query="", page=1, limit=50):
-        """Načte 'zelené' případy se stránkováním a hledáním."""
         conn = None; db_pool = None
         try:
             conn, db_pool = get_db_connection()
             offset = (page - 1) * limit
             
             if search_query:
-                # Pokud hledáme, hledáme v názvu nebo v parametrech (spis. značce)
                 query = """
                     SELECT * FROM pripady 
                     WHERE ma_zmenu = FALSE 
@@ -653,7 +697,6 @@ elif selected_page == "📊 Přehled kauz":
                 like_q = f"%{search_query}%"
                 return pd.read_sql_query(query, conn, params=(like_q, like_q, limit, offset))
             else:
-                # Pokud nehledáme, bereme jen stránku
                 query = "SELECT * FROM pripady WHERE ma_zmenu = FALSE ORDER BY id DESC LIMIT %s OFFSET %s"
                 return pd.read_sql_query(query, conn, params=(limit, offset))
         except: return pd.DataFrame()
@@ -661,7 +704,6 @@ elif selected_page == "📊 Přehled kauz":
             if conn and db_pool: db_pool.putconn(conn)
 
     def get_green_count(search_query=""):
-        """Vrátí celkový počet zelených případů (pro výpočet počtu stránek)."""
         conn = None; db_pool = None
         try:
             conn, db_pool = get_db_connection()
@@ -697,7 +739,7 @@ elif selected_page == "📊 Přehled kauz":
                 nazev_val = st.session_state.input_nazev
                 ok, msg = pridej_pripad(url_val, nazev_val)
                 trvani = time.time() - zacatek
-                if trvani < 5: time.sleep(5 - trvani)
+                if trvani < 10: time.sleep(10 - trvani)
                 
                 if ok:
                     st.cache_data.clear()
@@ -727,13 +769,10 @@ elif selected_page == "📊 Přehled kauz":
 
     # --- 3. HLAVNÍ VÝPIS KAUZ ---
     
-    # A) Načtení změn (červené) - VŽDY VŠECHNY
     df_zmeny = get_zmeny_all()
 
-    # B) Vyhledávání a stránkování pro ostatní (zelené)
     search_query = st.text_input("🔍 Vyhledat v archivu (Název nebo značka)", placeholder="Hledat...")
     
-    # Pokud uživatel začne hledat, resetujeme stránku na 1
     if 'last_search' not in st.session_state: st.session_state['last_search'] = ""
     if search_query != st.session_state['last_search']:
         st.session_state['page'] = 1
@@ -743,22 +782,16 @@ elif selected_page == "📊 Přehled kauz":
     total_pages = math.ceil(total_green / ITEMS_PER_PAGE)
     if total_pages < 1: total_pages = 1
     
-    # Načtení jen aktuální stránky (50 položek)
     df_ostatni = get_green_cases(search_query, st.session_state['page'], ITEMS_PER_PAGE)
 
-    # Callbacks
     def akce_videl_jsem(id_spisu):
         resetuj_upozorneni(id_spisu)
-        # Po přesunu do zelených resetujeme cache nebo stránku neřešíme, jen refresh
-        # st.rerun() - Streamlit udělá refresh sám
 
     def akce_smazat(id_spisu):
         smaz_pripad(id_spisu)
-        # st.rerun()
 
     def akce_videl_jsem_vse():
         resetuj_vsechna_upozorneni()
-        # st.rerun()
 
     # --- A) ČERVENÁ SEKCE ---
     if not df_zmeny.empty:
@@ -801,7 +834,7 @@ elif selected_page == "📊 Přehled kauz":
                             akce_smazat(row['id'])
                             st.rerun()
 
-    # --- B) ZELENÁ SEKCE (Stránkovaná) ---
+    # --- B) ZELENÁ SEKCE ---
     if not df_zmeny.empty: st.markdown("---")
     
     st.subheader(f"✅ Případy beze změn (Celkem: {total_green})")
@@ -843,20 +876,16 @@ elif selected_page == "📊 Přehled kauz":
                             akce_smazat(row['id'])
                             st.rerun()
 
-    # --- OVLÁDÁNÍ STRÁNKOVÁNÍ ---
     if total_pages > 1:
         st.markdown("---")
         c_prev, c_info, c_next = st.columns([1, 2, 1])
-        
         with c_prev:
             if st.session_state['page'] > 1:
                 if st.button("⬅️ Předchozí"):
                     st.session_state['page'] -= 1
                     st.rerun()
-        
         with c_info:
             st.markdown(f"<div style='text-align: center'>Strana <b>{st.session_state['page']}</b> z {total_pages}</div>", unsafe_allow_html=True)
-        
         with c_next:
             if st.session_state['page'] < total_pages:
                 if st.button("Další ➡️"):
