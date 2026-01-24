@@ -697,7 +697,7 @@ elif selected_page == "📊 Přehled kauz":
                 nazev_val = st.session_state.input_nazev
                 ok, msg = pridej_pripad(url_val, nazev_val)
                 trvani = time.time() - zacatek
-                if trvani < 10: time.sleep(10 - trvani)
+                if trvani < 5: time.sleep(5 - trvani)
                 
                 if ok:
                     st.cache_data.clear()
