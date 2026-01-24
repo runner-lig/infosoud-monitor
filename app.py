@@ -11,6 +11,7 @@ import hashlib
 import time
 import random
 import datetime
+import pytz  # <--- NOVÁ KNIHOVNA PRO ČESKÝ ČAS
 import os
 import math
 from urllib.parse import urlparse, parse_qs
@@ -22,6 +23,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- KONFIGURACE UI ---
 st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
+
+# --- 🕰️ NASTAVENÍ ČASOVÉHO PÁSMA (CZECHIA) ---
+# Funkce, která vrátí aktuální čas v Praze
+def get_now():
+    tz = pytz.timezone('Europe/Prague')
+    return datetime.datetime.now(tz)
 
 # --- 🔄 GLOBÁLNÍ STAV SCHEDULERU ---
 if not hasattr(st, "monitor_status"):
@@ -277,8 +284,9 @@ def log_do_historie(akce, popis):
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
+        # ZMĚNA: Používáme get_now() pro český čas
         c.execute("INSERT INTO historie (datum, uzivatel, akce, popis) VALUES (%s, %s, %s, %s)", 
-                  (datetime.datetime.now(), user, akce, popis))
+                  (get_now(), user, akce, popis))
         conn.commit()
     except Exception as e:
         print(f"Chyba logování: {e}")
@@ -288,7 +296,7 @@ def log_do_historie(akce, popis):
 def get_historie(dny=14):
     conn = None; db_pool = None
     try:
-        datum_limit = datetime.datetime.now() - datetime.timedelta(days=dny)
+        datum_limit = get_now() - datetime.timedelta(days=dny)
         conn, db_pool = get_db_connection()
         df = pd.read_sql_query("SELECT datum, uzivatel, akce, popis FROM historie WHERE datum > %s ORDER BY datum DESC", 
                                  conn, params=(datum_limit,))
@@ -406,15 +414,15 @@ def pridej_pripad(url, oznaceni):
     data = stahni_data_z_infosoudu(p)
     if data is None: return False, "Spis nenalezen."
     
-    # Formátování s mezerami pro log
     spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
     
     conn = None; db_pool = None
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
+        # ZMĚNA: get_now() pro čas
         c.execute("INSERT INTO pripady (oznaceni, url, params_json, pocet_udalosti, posledni_udalost, ma_zmenu, posledni_kontrola) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                  (oznaceni, url, json.dumps(p), len(data), data[-1] if data else "", False, datetime.datetime.now()))
+                  (oznaceni, url, json.dumps(p), len(data), data[-1] if data else "", False, get_now()))
         conn.commit()
         log_do_historie("Přidání spisu", f"Přidán spis: {oznaceni} ({spis_zn})")
         return True, "OK"
@@ -486,47 +494,39 @@ def prejmenuj_pripad(cid, novy_nazev):
 @st.cache_resource
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    # Interval 60 minut
-    scheduler.add_job(monitor_job, 'interval', minutes=60)
+    # ZMĚNA: Trigger cron, spouští se každou hodinu v XX:36
+    scheduler.add_job(monitor_job, 'cron', minute=36)
     scheduler.start()
     return scheduler
 
 def zkontroluj_jeden_pripad(row):
-    cid, params_str, old_cnt, name, _ = row  # Unpack 5 hodnot
+    cid, params_str, old_cnt, name, _ = row
     
     conn = None; db_pool = None
     try:
         p = json.loads(params_str)
-        
-        # BEZPEČNOSTNÍ PAUZA (1-3s)
         time.sleep(random.uniform(1.0, 3.0))
-        
         new_data = stahni_data_z_infosoudu(p)
         
         if new_data is not None:
-            now = datetime.datetime.now()
-            
+            # ZMĚNA: get_now()
+            now = get_now()
             conn, db_pool = get_db_connection()
             c = conn.cursor()
             
             if len(new_data) > old_cnt:
-                # ZMĚNA!
                 c.execute("UPDATE pripady SET pocet_udalosti=%s, posledni_udalost=%s, ma_zmenu=%s, posledni_kontrola=%s WHERE id=%s", 
                           (len(new_data), new_data[-1], True, now, cid))
                 conn.commit()
-                
                 try:
                     c.execute("INSERT INTO historie (datum, uzivatel, akce, popis) VALUES (%s, %s, %s, %s)",
                               (now, "🤖 Systém (Robot)", "Nová událost", f"Změna u {name}"))
                     conn.commit()
                 except: pass
                 
-                # E-mail
                 spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
                 odeslat_email_notifikaci(name, new_data[-1], spis_zn)
-                
             else:
-                # BEZ ZMĚNY
                 c.execute("UPDATE pripady SET posledni_kontrola=%s WHERE id=%s", (now, cid))
                 conn.commit()
             return True
@@ -543,12 +543,10 @@ def je_pripad_skonceny(text_udalosti):
     return "skončení věci" in txt or "pravomoc" in txt or "vyřízeno" in txt
 
 def monitor_job():
-    if st.monitor_status.get("running", False):
-        return
+    if st.monitor_status.get("running", False): return
 
-    # START
     st.monitor_status["running"] = True
-    st.monitor_status["start_time"] = datetime.datetime.now()
+    st.monitor_status["start_time"] = get_now() # ZMĚNA
     st.monitor_status["progress"] = 0
     
     conn = None; db_pool = None
@@ -559,23 +557,19 @@ def monitor_job():
         all_rows = c.fetchall()
         db_pool.putconn(conn); conn = None 
         
-        # --- FILTRACE (DEN vs NOC) ---
-        aktualni_hodina = datetime.datetime.now().hour
+        # ZMĚNA: Používáme get_now() pro určení hodiny v Praze
+        aktualni_hodina = get_now().hour
         
         aktivni_pripady = []
         skoncene_pripady = []
-        
         for r in all_rows:
-            last_event_text = r[4] # Index 4 je posledni_udalost
-            if je_pripad_skonceny(last_event_text):
-                skoncene_pripady.append(r)
-            else:
-                aktivni_pripady.append(r)
+            if je_pripad_skonceny(r[4]): skoncene_pripady.append(r)
+            else: aktivni_pripady.append(r)
         
         target_rows = []
         rezim_text = ""
         
-        if aktualni_hodina == 2: # 02:00 - 02:59
+        if aktualni_hodina == 2: # 2:00 - 2:59 v noci
             target_rows = skoncene_pripady
             rezim_text = "🌙 NOČNÍ KONTROLA (ARCHIV)"
         else:
@@ -584,10 +578,8 @@ def monitor_job():
             
         st.monitor_status["total"] = len(target_rows)
         st.monitor_status["mode"] = rezim_text
+        print(f"--- START {rezim_text} ---")
         
-        print(f"--- START {rezim_text} ({datetime.datetime.now()}) - Počet: {len(target_rows)} ---")
-        
-        # --- BEZPEČNÁ PARALELIZACE (Max 3 vlákna) ---
         dokonceno = 0
         if target_rows:
             with ThreadPoolExecutor(max_workers=3) as executor:
@@ -602,7 +594,7 @@ def monitor_job():
         print(f"Chyba scheduleru: {e}")
     finally:
         st.monitor_status["running"] = False
-        st.monitor_status["last_finished"] = datetime.datetime.now()
+        st.monitor_status["last_finished"] = get_now() # ZMĚNA
         if conn and db_pool: db_pool.putconn(conn)
 
 start_scheduler()
@@ -690,6 +682,7 @@ with st.sidebar:
     else:
         last_time = st.monitor_status["last_finished"]
         if last_time:
+            # ZMĚNA: Formátování času pro české oči
             st.caption(f"Poslední kontrola: {last_time.strftime('%H:%M')}")
         else:
             st.caption("Čekám na spuštění...")
@@ -801,7 +794,6 @@ elif selected_page == "📊 Přehled kauz":
         finally: 
             if conn and db_pool: db_pool.putconn(conn)
 
-    # Načteme VŠECHNY zelené případy najednou (pro Python filtr)
     def get_all_green_cases_raw():
         conn = None; db_pool = None
         try:
