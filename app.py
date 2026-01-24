@@ -597,53 +597,63 @@ elif selected_page == "📊 Přehled kauz":
     with st.sidebar:
         st.header("➕ Přidat nový spis")
         
-        # --- 🛠️ OPRAVA: MAZÁNÍ POLÍČEK ---
-        # Musíme to udělat TADY NAHOŘE, ještě než se vykreslí inputy.
-        # Pokud jsme v minulém běhu nastavili, že se má mazat, provedeme to teď.
+        # 1. ČIŠTĚNÍ POLÍČEK (Bezpečné mazání po restartu)
         if st.session_state.get('smazat_vstupy'):
             st.session_state.input_url = ""
             st.session_state.input_nazev = ""
-            st.session_state.smazat_vstupy = False # Vlaječku zase sklopíme
+            st.session_state.smazat_vstupy = False 
         
-        # Vstupy pro URL a Název
+        # 2. VSTUPNÍ POLE
         st.text_input("Název kauzy", key="input_nazev")
         st.text_input("URL z Infosoudu", key="input_url")
         
-        # --- ZMĚNA ROZLOŽENÍ ---
+        # 3. ROZLOŽENÍ TLAČÍTKA A SPINNERU
         col_btn, col_spin = st.columns([0.35, 0.65])
         
         with col_btn:
             tlacitko_stisknuto = st.button("Sledovat", help="Přidat případ do sledování", use_container_width=True)
 
-        # Logika se provede, když se stiskne tlačítko
+        # 4. LOGIKA PO STISKNUTÍ
         if tlacitko_stisknuto:
             with col_spin:
+                # Text, který uvidí uživatel
                 with st.spinner("⏳ Přidávám případ..."):
                     
-                    # 1. Samotné stahování dat
-                    # Používáme hodnoty z aktuálního stavu
+                    # A) Spustíme stopky
+                    zacatek = time.time()
+                    
+                    # B) Stahujeme data a ukládáme do DB
                     url_val = st.session_state.input_url
                     nazev_val = st.session_state.input_nazev
-                    
                     ok, msg = pridej_pripad(url_val, nazev_val)
                     
+                    # C) VYNUCENÉ ČEKÁNÍ (ZÁRUKA 15 VTEŘIN)
+                    # Změříme, jak dlouho trvalo samotné přidání
+                    trvani = time.time() - zacatek
+                    
+                    # Pokud to bylo rychlejší než 15s, dospíme zbytek
+                    # Tím zajistíme, že kolečko se točí minimálně 15 vteřin v kuse
+                    if trvani < 15:
+                        time.sleep(15 - trvani)
+                    
+                    # D) Zpracování výsledku
                     if ok:
-                        # 2. Vyčistíme cache (stále se točí kolečko)
+                        # Vyčistíme cache, aby se načetla nová data
                         st.cache_data.clear()
+                        
+                        # Nastavíme úspěch
                         st.session_state['vysledek_akce'] = ("success", msg)
                         
-                        # 3. DŮLEŽITÉ: Nemažeme inputy přímo tady (to by spadlo),
-                        # ale nastavíme "vlaječku", že se mají smazat při příštím startu.
+                        # Nastavíme vlaječku pro smazání políček při příštím načtení
                         st.session_state['smazat_vstupy'] = True
                     else:
                         st.session_state['vysledek_akce'] = ("error", msg)
             
-            # 4. Restartujeme aplikaci
-            # (Při novém načtení se nahoře provede ten blok 'if smazat_vstupy' a políčka budou prázdná)
+            # 5. Restart stránky (proběhne až po uplynutí těch 15 vteřin)
             if ok:
                 st.rerun()
 
-        # Zobrazení hlášky (úspěch/chyba)
+        # Zobrazení hlášky pod tlačítkem
         if 'vysledek_akce' in st.session_state:
             typ, text = st.session_state['vysledek_akce']
             if typ == 'success': st.success(text)
