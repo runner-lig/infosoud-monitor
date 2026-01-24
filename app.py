@@ -71,7 +71,6 @@ def get_db_connection():
 
 # --- 🍪 SPRÁVCE COOKIES (BEZ CACHE) ---
 def get_cookie_manager():
-    # Nastavíme unikátní klíč, aby se komponenta neresetovala
     return stx.CookieManager(key="cookie_mgr")
 
 cookie_manager = get_cookie_manager()
@@ -395,7 +394,8 @@ def pridej_pripad(url, oznaceni):
     data = stahni_data_z_infosoudu(p)
     if data is None: return False, "Spis nenalezen."
     
-    spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
+    # --- ZMĚNA 1/4: Formátování s mezerami pro ukládání do DB (log) ---
+    spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
     
     conn = None; db_pool = None
     try:
@@ -513,7 +513,9 @@ def monitor_job(status_placeholder=None, progress_bar=None):
                         conn.commit()
                     except: pass
                     
-                    spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
+                    # --- ZMĚNA 2/4: Formátování s mezerami pro e-mail ---
+                    spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
+                    
                     odeslat_email_notifikaci(name, new_data[-1], spis_zn)
                 else:
                     c.execute("UPDATE pripady SET posledni_kontrola=%s WHERE id=%s", (now, cid))
@@ -527,7 +529,7 @@ def monitor_job(status_placeholder=None, progress_bar=None):
 start_scheduler()
 
 # -------------------------------------------------------------------------
-# 4. FRONTEND A PŘIHLÁŠENÍ (S OPRAVENÝM ODHLÁŠENÍM A FLICKEREM)
+# 4. FRONTEND A PŘIHLÁŠENÍ (S ANTI-FLICKER LOGIKOU)
 # -------------------------------------------------------------------------
 
 if 'logged_in' not in st.session_state:
@@ -538,14 +540,10 @@ if 'logged_in' not in st.session_state:
 # --- AUTOMATICKÉ PŘIHLÁŠENÍ ---
 if not st.session_state['logged_in']:
 
-    # 🛠️ ANTI-FLICKER: Pokud uživatel NEKLIKL na odhlásit se,
-    # zkusíme počkat na cookie. Pokud cookie není a ani jsme se neodhlásili,
-    # tak chvilku počkáme, než zobrazíme formulář.
     if 'prevent_relogin' not in st.session_state:
         try:
             cookie_user = cookie_manager.get(cookie="infosoud_user")
             
-            # Pokud máme cookie, hned přihlásíme
             if cookie_user:
                 role = get_user_role(cookie_user)
                 if role:
@@ -554,18 +552,14 @@ if not st.session_state['logged_in']:
                     st.session_state['user_role'] = role
                     st.rerun()
             
-            # Pokud cookie nemáme, ale je to první načtení (ne odhlášení),
-            # dáme komponentě šanci se načíst (proti probliku)
             else:
                  time.sleep(0.2)
-                 # Zkusíme znovu po sleepu
                  cookie_user = cookie_manager.get(cookie="infosoud_user")
                  if cookie_user:
                      st.rerun()
 
         except: pass
 
-# Pokud stále nejsme přihlášeni, ukážeme formulář
 if not st.session_state['logged_in']:
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
@@ -582,10 +576,8 @@ if not st.session_state['logged_in']:
                     st.session_state['current_user'] = username
                     st.session_state['user_role'] = role
                     
-                    # Uložíme cookie
                     cookie_manager.set("infosoud_user", username, expires_at=datetime.datetime.now() + datetime.timedelta(days=7))
                     
-                    # Resetujeme případný zákaz reloginu
                     if 'prevent_relogin' in st.session_state:
                         del st.session_state['prevent_relogin']
                         
@@ -604,17 +596,11 @@ with st.sidebar:
     st.write(f"👤 **{st.session_state['current_user']}**")
     st.caption(f"Role: {st.session_state['user_role']}")
     
-    # --- OPRAVENÉ ODHLÁŠENÍ ---
     if st.button("Odhlásit se"):
-        # 1. Smažeme cookie
         cookie_manager.delete("infosoud_user")
-        # 2. Nastavíme stav na odhlášeno
         st.session_state['logged_in'] = False
-        # 3. DŮLEŽITÉ: Nastavíme vlajku, aby se při refresh nezkoušelo cookie hned číst
         st.session_state['prevent_relogin'] = True
-        # 4. Počkáme chvilku, ať to prohlížeč stihne zpracovat
         time.sleep(0.5)
-        # 5. Restart
         st.rerun()
         
     st.markdown("---")
@@ -740,7 +726,7 @@ elif selected_page == "📊 Přehled kauz":
                 nazev_val = st.session_state.input_nazev
                 ok, msg = pridej_pripad(url_val, nazev_val)
                 trvani = time.time() - zacatek
-                if trvani < 10: time.sleep(10 - trvani)
+                if trvani < 5: time.sleep(5 - trvani)
                 
                 if ok:
                     st.cache_data.clear()
@@ -802,7 +788,9 @@ elif selected_page == "📊 Přehled kauz":
         for index, row in df_zmeny.iterrows():
             try:
                 p = json.loads(row['params_json'])
-                spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
+                # --- ZMĚNA 3/4: Formátování s mezerami pro zobrazení (červené) ---
+                spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
+                
                 kod_soudu = p.get('soud')
                 nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
                 formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
@@ -845,7 +833,9 @@ elif selected_page == "📊 Přehled kauz":
         for index, row in df_ostatni.iterrows():
             try:
                 p = json.loads(row['params_json'])
-                spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')}/{p.get('rocnik')}"
+                # --- ZMĚNA 4/4: Formátování s mezerami pro zobrazení (zelené) ---
+                spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
+                
                 kod_soudu = p.get('soud')
                 nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
                 formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
