@@ -607,49 +607,38 @@ elif selected_page == "📊 Přehled kauz":
         st.text_input("Název kauzy", key="input_nazev")
         st.text_input("URL z Infosoudu", key="input_url")
         
-        # 3. ROZLOŽENÍ TLAČÍTKA A SPINNERU
-        col_btn, col_spin = st.columns([0.35, 0.65])
-        
-        with col_btn:
-            tlacitko_stisknuto = st.button("Sledovat", help="Přidat případ do sledování", use_container_width=True)
+        # 3. TLAČÍTKO (Na celou šířku - bez sloupců)
+        # Díky use_container_width=True se roztáhne a text se nebude lámat
+        tlacitko_stisknuto = st.button("Sledovat", use_container_width=True)
 
-        # 4. LOGIKA PO STISKNUTÍ
+        # 4. LOGIKA PO STISKNUTÍ (Spinner se objeví pod tlačítkem)
         if tlacitko_stisknuto:
-            with col_spin:
-                # Text, který uvidí uživatel
-                with st.spinner("⏳ Přidávám případ..."):
-                    
-                    # A) Spustíme stopky
-                    zacatek = time.time()
-                    
-                    # B) Stahujeme data a ukládáme do DB
-                    url_val = st.session_state.input_url
-                    nazev_val = st.session_state.input_nazev
-                    ok, msg = pridej_pripad(url_val, nazev_val)
-                    
-                    # C) VYNUCENÉ ČEKÁNÍ (ZÁRUKA 15 VTEŘIN)
-                    # Změříme, jak dlouho trvalo samotné přidání
-                    trvani = time.time() - zacatek
-                    
-                    # Pokud to bylo rychlejší než 15s, dospíme zbytek
-                    # Tím zajistíme, že kolečko se točí minimálně 15 vteřin v kuse
-                    if trvani < 10:
-                        time.sleep(10 - trvani)
-                    
-                    # D) Zpracování výsledku
-                    if ok:
-                        # Vyčistíme cache, aby se načetla nová data
-                        st.cache_data.clear()
-                        
-                        # Nastavíme úspěch
-                        st.session_state['vysledek_akce'] = ("success", msg)
-                        
-                        # Nastavíme vlaječku pro smazání políček při příštím načtení
-                        st.session_state['smazat_vstupy'] = True
-                    else:
-                        st.session_state['vysledek_akce'] = ("error", msg)
+            # Text, který uvidí uživatel (teď je pod tlačítkem)
+            with st.spinner("⏳ Přidávám případ..."):
+                
+                # A) Spustíme stopky
+                zacatek = time.time()
+                
+                # B) Stahujeme data a ukládáme do DB
+                url_val = st.session_state.input_url
+                nazev_val = st.session_state.input_nazev
+                ok, msg = pridej_pripad(url_val, nazev_val)
+                
+                # C) VYNUCENÉ ČEKÁNÍ (ZÁRUKA 10 VTEŘIN)
+                trvani = time.time() - zacatek
+                
+                if trvani < 10:
+                    time.sleep(10 - trvani)
+                
+                # D) Zpracování výsledku
+                if ok:
+                    st.cache_data.clear()
+                    st.session_state['vysledek_akce'] = ("success", msg)
+                    st.session_state['smazat_vstupy'] = True
+                else:
+                    st.session_state['vysledek_akce'] = ("error", msg)
             
-            # 5. Restart stránky (proběhne až po uplynutí těch 15 vteřin)
+            # 5. Restart stránky
             if ok:
                 st.rerun()
 
@@ -662,7 +651,7 @@ elif selected_page == "📊 Přehled kauz":
         
         st.divider()
         
-        # ... Zbytek sidebaru (tlačítka pro ruční kontrolu atd.) ...
+        # ... Zbytek sidebaru ...
         if st.button("🔄 Ruční kontrola"):
             st.write("---")
             status_text = st.empty()
@@ -697,8 +686,6 @@ elif selected_page == "📊 Přehled kauz":
                  else: st.warning("Žádné spisy.")
              finally:
                  conn.close()
-
-# ... (horní část s funkcemi cache a sidebarem zůstává stejná) ...
 
     # --- 3. HLAVNÍ VÝPIS KAUZ ---
     df = get_pripady_data()
