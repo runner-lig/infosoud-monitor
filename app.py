@@ -11,7 +11,7 @@ import hashlib
 import time
 import random
 import datetime
-import pytz  # <--- NOVÁ KNIHOVNA PRO ČESKÝ ČAS
+import pytz
 import os
 import math
 from urllib.parse import urlparse, parse_qs
@@ -25,7 +25,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
 
 # --- 🕰️ NASTAVENÍ ČASOVÉHO PÁSMA (CZECHIA) ---
-# Funkce, která vrátí aktuální čas v Praze
 def get_now():
     tz = pytz.timezone('Europe/Prague')
     return datetime.datetime.now(tz)
@@ -179,6 +178,14 @@ def init_db():
                       uzivatel TEXT,
                       akce TEXT,
                       popis TEXT)''')
+        
+        # --- NOVÁ TABULKA PRO LOGY KONTROL ---
+        c.execute('''CREATE TABLE IF NOT EXISTS system_logs
+                     (id SERIAL PRIMARY KEY,
+                      start_time TIMESTAMP,
+                      end_time TIMESTAMP,
+                      mode TEXT,
+                      processed_count INTEGER)''')
                      
         conn.commit()
     except Exception as e:
@@ -284,7 +291,6 @@ def log_do_historie(akce, popis):
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
-        # ZMĚNA: Používáme get_now() pro český čas
         c.execute("INSERT INTO historie (datum, uzivatel, akce, popis) VALUES (%s, %s, %s, %s)", 
                   (get_now(), user, akce, popis))
         conn.commit()
@@ -299,6 +305,19 @@ def get_historie(dny=14):
         datum_limit = get_now() - datetime.timedelta(days=dny)
         conn, db_pool = get_db_connection()
         df = pd.read_sql_query("SELECT datum, uzivatel, akce, popis FROM historie WHERE datum > %s ORDER BY datum DESC", 
+                                 conn, params=(datum_limit,))
+        return df
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        if conn and db_pool: db_pool.putconn(conn)
+
+def get_system_logs(dny=3):
+    conn = None; db_pool = None
+    try:
+        datum_limit = get_now() - datetime.timedelta(days=dny)
+        conn, db_pool = get_db_connection()
+        df = pd.read_sql_query("SELECT start_time, end_time, mode, processed_count FROM system_logs WHERE start_time > %s ORDER BY start_time DESC", 
                                  conn, params=(datum_limit,))
         return df
     except Exception:
@@ -420,7 +439,6 @@ def pridej_pripad(url, oznaceni):
     try:
         conn, db_pool = get_db_connection()
         c = conn.cursor()
-        # ZMĚNA: get_now() pro čas
         c.execute("INSERT INTO pripady (oznaceni, url, params_json, pocet_udalosti, posledni_udalost, ma_zmenu, posledni_kontrola) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                   (oznaceni, url, json.dumps(p), len(data), data[-1] if data else "", False, get_now()))
         conn.commit()
@@ -494,7 +512,6 @@ def prejmenuj_pripad(cid, novy_nazev):
 @st.cache_resource
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    # ZMĚNA: Trigger cron, spouští se každou hodinu v XX:36
     scheduler.add_job(monitor_job, 'cron', minute=40)
     scheduler.start()
     return scheduler
@@ -509,7 +526,6 @@ def zkontroluj_jeden_pripad(row):
         new_data = stahni_data_z_infosoudu(p)
         
         if new_data is not None:
-            # ZMĚNA: get_now()
             now = get_now()
             conn, db_pool = get_db_connection()
             c = conn.cursor()
@@ -545,8 +561,10 @@ def je_pripad_skonceny(text_udalosti):
 def monitor_job():
     if st.monitor_status.get("running", False): return
 
+    # START
+    start_ts = get_now()
     st.monitor_status["running"] = True
-    st.monitor_status["start_time"] = get_now() # ZMĚNA
+    st.monitor_status["start_time"] = start_ts
     st.monitor_status["progress"] = 0
     
     conn = None; db_pool = None
@@ -557,7 +575,6 @@ def monitor_job():
         all_rows = c.fetchall()
         db_pool.putconn(conn); conn = None 
         
-        # ZMĚNA: Používáme get_now() pro určení hodiny v Praze
         aktualni_hodina = get_now().hour
         
         aktivni_pripady = []
@@ -569,7 +586,7 @@ def monitor_job():
         target_rows = []
         rezim_text = ""
         
-        if aktualni_hodina == 2: # 2:00 - 2:59 v noci
+        if aktualni_hodina == 2: 
             target_rows = skoncene_pripady
             rezim_text = "🌙 NOČNÍ KONTROLA (ARCHIV)"
         else:
@@ -589,12 +606,20 @@ def monitor_job():
                     st.monitor_status["progress"] = dokonceno
             
         print(f"--- KONEC KONTROLY ---")
+        
+        # --- ZÁPIS DO DB LOGU (NOVÉ) ---
+        end_ts = get_now()
+        conn, db_pool = get_db_connection() # Musíme si vzít nové spojení
+        c = conn.cursor()
+        c.execute("INSERT INTO system_logs (start_time, end_time, mode, processed_count) VALUES (%s, %s, %s, %s)",
+                  (start_ts, end_ts, rezim_text, dokonceno))
+        conn.commit()
                     
     except Exception as e:
         print(f"Chyba scheduleru: {e}")
     finally:
         st.monitor_status["running"] = False
-        st.monitor_status["last_finished"] = get_now() # ZMĚNA
+        st.monitor_status["last_finished"] = get_now()
         if conn and db_pool: db_pool.putconn(conn)
 
 start_scheduler()
@@ -664,28 +689,37 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # --- INFO O AUTOMATICKÉ KONTROLE ---
-    st.markdown("### 🤖 Automatická kontrola")
-    if st.monitor_status["running"]:
-        total = st.monitor_status["total"]
-        done = st.monitor_status["progress"]
-        mode = st.monitor_status.get("mode", "Běží...")
-        
-        remaining = total - done
-        eta_seconds = remaining * 0.8 
-        eta_min = int(eta_seconds // 60)
-        
-        st.info(f"{mode}")
-        st.progress(int((done / total) * 100) if total > 0 else 0)
-        st.caption(f"Zpracováno: **{done} / {total}**")
-        st.caption(f"Zbývá cca: **{eta_min} min**")
-    else:
-        last_time = st.monitor_status["last_finished"]
-        if last_time:
-            # ZMĚNA: Formátování času pro české oči
-            st.caption(f"Poslední kontrola: {last_time.strftime('%H:%M')}")
+    # --- AUTOMATICKY SE AKTUALIZUJÍCÍ PANEL ---
+    @st.fragment(run_every=2)
+    def render_status():
+        st.markdown("### 🤖 Automatická kontrola")
+        if st.monitor_status["running"]:
+            total = st.monitor_status["total"]
+            done = st.monitor_status["progress"]
+            mode = st.monitor_status.get("mode", "Běží...")
+            
+            remaining = total - done
+            eta_seconds = remaining * 0.8 
+            eta_min = int(eta_seconds // 60)
+            
+            st.info(f"{mode}")
+            st.progress(int((done / total) * 100) if total > 0 else 0)
+            st.caption(f"Zpracováno: **{done} / {total}**")
+            st.caption(f"Zbývá cca: **{eta_min} min**")
         else:
-            st.caption("Čekám na spuštění...")
+            last_time = st.monitor_status["last_finished"]
+            if last_time:
+                if isinstance(last_time, str):
+                    try: last_time = datetime.datetime.fromisoformat(last_time)
+                    except: pass
+                if isinstance(last_time, datetime.datetime):
+                    st.caption(f"Poslední kontrola: {last_time.strftime('%H:%M')}")
+                else:
+                    st.caption("Poslední kontrola: (neznámý čas)")
+            else:
+                st.caption("Čekám na spuštění...")
+    
+    render_status()
             
     st.markdown("---")
 
@@ -725,7 +759,7 @@ with st.sidebar:
         
     st.divider()
 
-menu_options = ["📊 Přehled kauz", "📜 Auditní historie"]
+menu_options = ["📊 Přehled kauz", "📜 Auditní historie", "🤖 Logy kontrol"]
 if st.session_state['user_role'] in ["Super Admin", "Administrátor"]:
     menu_options.append("👥 Správa uživatelů")
 
@@ -950,6 +984,36 @@ elif selected_page == "📊 Přehled kauz":
             if st.session_state['page'] < total_pages:
                 if st.button("Další ➡️"):
                     st.session_state['page'] += 1; st.rerun()
+
+# -------------------------------------------------------------------------
+# STRÁNKA: LOGY KONTROL
+# -------------------------------------------------------------------------
+elif selected_page == "🤖 Logy kontrol":
+    st.header("🤖 Historie automatických kontrol (poslední 3 dny)")
+    
+    df_logs = get_system_logs(dny=3)
+    
+    if not df_logs.empty:
+        # Převod na hezčí formát
+        df_logs['start_time'] = pd.to_datetime(df_logs['start_time']).dt.strftime("%d.%m.%Y %H:%M")
+        # Výpočet trvání
+        df_logs['trvani'] = (pd.to_datetime(df_logs['end_time']) - pd.to_datetime(df_logs['start_time'], format="%d.%m.%Y %H:%M")).dt.total_seconds().apply(lambda x: f"{int(x // 60)} min {int(x % 60)} s")
+        
+        # Sloupec "Ikona" podle režimu
+        def get_icon(mode_text):
+            if "NOČNÍ" in str(mode_text): return "🌙"
+            if "DENNÍ" in str(mode_text): return "☀️"
+            return "❓"
+            
+        df_logs['ikona'] = df_logs['mode'].apply(get_icon)
+        
+        # Zobrazíme jen to podstatné
+        df_display = df_logs[['start_time', 'ikona', 'mode', 'processed_count', 'trvani']].copy()
+        df_display.columns = ["Začátek", "", "Režim", "Zkontrolováno spisů", "Doba trvání"]
+        
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+    else:
+        st.info("Zatím neproběhla žádná kontrola (nebo je databáze prázdná).")
 
 # -------------------------------------------------------------------------
 # STRÁNKA: AUDITNÍ HISTORIE
