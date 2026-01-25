@@ -30,6 +30,7 @@ from email.mime.multipart import MIMEMultipart
 from apscheduler.schedulers.background import BackgroundScheduler
 import extra_streamlit_components as stx
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import traceback
 
 # --- KONFIGURACE UI ---
 st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
@@ -401,8 +402,9 @@ def odeslat_email_notifikaci(nazev, udalost, znacka):
         s.quit()
         print("--- [DEBUG] ✅ HOTOVO! Odesláno.")
         log_do_historie("Odeslání notifikace", f"Odesláno na {len(prijemci)} adres.")
-    except Exception as e: 
-        print(f"--- [DEBUG] ❌ CHYBA ODESÍLÁNÍ: {e}")
+    except Exception as e:
+        print(f"--- [DEBUG] ❌ CHYBA ODESÍLÁNÍ: {repr(e)}")
+        traceback.print_exc()
 
 # -------------------------------------------------------------------------
 # 3. PARSOVÁNÍ A SCRAPING
