@@ -14,6 +14,20 @@ import datetime
 import pytz
 import os
 import math
+import socket # <--- Důležité: Přidán import socketu
+
+# --- 🚑 FIX PRO ODESÍLÁNÍ EMAILU (FORCE IPv4) ---
+# Toto donutí Python ignorovat IPv6 a používat jen starý dobrý IPv4.
+# Řeší chybu [Errno 101] Network is unreachable na Railway/Dockeru.
+original_getaddrinfo = socket.getaddrinfo
+
+def new_getaddrinfo(*args, **kwargs):
+    responses = original_getaddrinfo(*args, **kwargs)
+    return [res for res in responses if res[0] == socket.AF_INET]
+
+socket.getaddrinfo = new_getaddrinfo
+# -----------------------------------------------
+
 from urllib.parse import urlparse, parse_qs
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
