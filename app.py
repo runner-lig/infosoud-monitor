@@ -388,7 +388,15 @@ def odeslat_email_notifikaci(nazev, udalost, znacka):
         
         for p in prijemci:
             print(f"--- [DEBUG] Odesílám na: {p}")
-            del msg['To']; msg['To'] = p; s.sendmail(SMTP_EMAIL, p, msg.as_string())
+            msg = MIMEMultipart()
+            msg['From'] = SMTP_EMAIL
+            msg['To'] = p
+            msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
+            msg.attach(MIMEText(
+                f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor",
+                'plain'
+            ))
+            s.sendmail(SMTP_EMAIL, p, msg.as_string())
             
         s.quit()
         print("--- [DEBUG] ✅ HOTOVO! Odesláno.")
