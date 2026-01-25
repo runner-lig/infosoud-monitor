@@ -332,54 +332,52 @@ def get_system_logs(dny=3):
 def odeslat_email_notifikaci(nazev, udalost, znacka):
     print(f"--- [DEBUG] ZAČÁTEK ODESÍLÁNÍ EMAILU: {nazev} ---")
     
-    # 1. Kontrola nastavení odesílatele
+    # 1. Kontrola nastavení
     if not SMTP_EMAIL:
         print("--- [DEBUG] CHYBA: Nemám SMTP_EMAIL")
         return
         
     if "novy.email" in SMTP_EMAIL: 
-        print("--- [DEBUG] STOP: SMTP_EMAIL obsahuje 'novy.email', funkce ukončena (pojistka).")
+        print("--- [DEBUG] STOP: SMTP_EMAIL obsahuje 'novy.email'.")
         return
 
     conn = None; db_pool = None; prijemci = []
     
-    # 2. Hledání v databázi
+    # 2. Hledání příjemců
     try:
         conn, db_pool = get_db_connection()
-        print("--- [DEBUG] DB připojena, hledám uživatele...")
         df_users = pd.read_sql_query("SELECT email FROM uzivatele WHERE email IS NOT NULL AND email != ''", conn)
         prijemci = df_users['email'].tolist()
-        print(f"--- [DEBUG] Nalezeno v DB: {len(prijemci)} adres: {prijemci}")
     except Exception as e: 
-        print(f"--- [DEBUG] Chyba při čtení DB: {e}")
+        print(f"--- [DEBUG] Chyba DB: {e}")
         prijemci = []
     finally:
         if conn and db_pool: db_pool.putconn(conn)
     
-    # 3. Přidání Super Admina
-    print(f"--- [DEBUG] Super Admin Email z nastavení: '{SUPER_ADMIN_EMAIL}'")
     if SUPER_ADMIN_EMAIL and "@" in SUPER_ADMIN_EMAIL:
         prijemci.append(SUPER_ADMIN_EMAIL)
     
     prijemci = list(set(prijemci)) 
-    print(f"--- [DEBUG] FINÁLNÍ SEZNAM PŘÍJEMCŮ: {prijemci}")
+    print(f"--- [DEBUG] Adresáti: {prijemci}")
 
     if not prijemci: 
-        print("--- [DEBUG] KONEC: Seznam příjemců je prázdný. Nemám komu psát.")
+        print("--- [DEBUG] Žádní příjemci.")
         return
 
-    # 4. Samotné odeslání
+    # 3. Odeslání přes PORT 465 (SSL)
     msg = MIMEMultipart()
     msg['From'] = SMTP_EMAIL
     msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
     msg.attach(MIMEText(f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor", 'plain'))
 
     try:
-        print(f"--- [DEBUG] Připojuji se k SMTP serveru {SMTP_SERVER}:{SMTP_PORT}...")
-        s = smtplib.SMTP(SMTP_SERVER, int(SMTP_PORT))
-        s.starttls()
+        # ZMĚNA ZDE: Používáme SMTP_SSL a port 465
+        print(f"--- [DEBUG] Připojuji se k SMTP (SSL) na portu 465...")
+        s = smtplib.SMTP_SSL(SMTP_SERVER, 465)
         
-        print(f"--- [DEBUG] Přihlašuji se jako {SMTP_EMAIL}...")
+        # U SSL se nevolá starttls()! Spojení je šifrované rovnou.
+        
+        print(f"--- [DEBUG] Přihlašuji se...")
         s.login(SMTP_EMAIL, SMTP_PASSWORD)
         
         for p in prijemci:
@@ -387,10 +385,10 @@ def odeslat_email_notifikaci(nazev, udalost, znacka):
             del msg['To']; msg['To'] = p; s.sendmail(SMTP_EMAIL, p, msg.as_string())
             
         s.quit()
-        print("--- [DEBUG] HOTOVO: E-maily odeslány.")
+        print("--- [DEBUG] ✅ HOTOVO! Odesláno.")
         log_do_historie("Odeslání notifikace", f"Odesláno na {len(prijemci)} adres.")
     except Exception as e: 
-        print(f"--- [DEBUG] KRITICKÁ CHYBA SMTP: {e}")
+        print(f"--- [DEBUG] ❌ CHYBA ODESÍLÁNÍ: {e}")
 
 # -------------------------------------------------------------------------
 # 3. PARSOVÁNÍ A SCRAPING
