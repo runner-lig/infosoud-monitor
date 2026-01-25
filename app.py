@@ -1,16 +1,12 @@
-import socket # <--- Důležité: Přidán import socketu
-
-# --- 🚑 FIX PRO ODESÍLÁNÍ EMAILU (FORCE IPv4) ---
-# Toto donutí Python ignorovat IPv6 a používat jen starý dobrý IPv4.
-# Řeší chybu [Errno 101] Network is unreachable na Railway/Dockeru.
+# --- 🚑 FIX PRO ODESÍLÁNÍ EMAILU (MUSÍ BÝT ÚPLNĚ PRVNÍ) ---
+import socket
+# Toto donutí Python ignorovat IPv6 a používat jen IPv4.
 original_getaddrinfo = socket.getaddrinfo
-
 def new_getaddrinfo(*args, **kwargs):
     responses = original_getaddrinfo(*args, **kwargs)
     return [res for res in responses if res[0] == socket.AF_INET]
-
 socket.getaddrinfo = new_getaddrinfo
-# -----------------------------------------------
+# -----------------------------------------------------------
 
 import streamlit as st
 import psycopg2
@@ -28,8 +24,6 @@ import datetime
 import pytz
 import os
 import math
-
-
 from urllib.parse import urlparse, parse_qs
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -348,7 +342,6 @@ def get_system_logs(dny=3):
 def odeslat_email_notifikaci(nazev, udalost, znacka):
     print(f"--- [DEBUG] ZAČÁTEK ODESÍLÁNÍ EMAILU: {nazev} ---")
     
-    # 1. Kontrola nastavení
     if not SMTP_EMAIL:
         print("--- [DEBUG] CHYBA: Nemám SMTP_EMAIL")
         return
@@ -359,7 +352,6 @@ def odeslat_email_notifikaci(nazev, udalost, znacka):
 
     conn = None; db_pool = None; prijemci = []
     
-    # 2. Hledání příjemců
     try:
         conn, db_pool = get_db_connection()
         df_users = pd.read_sql_query("SELECT email FROM uzivatele WHERE email IS NOT NULL AND email != ''", conn)
@@ -380,18 +372,16 @@ def odeslat_email_notifikaci(nazev, udalost, znacka):
         print("--- [DEBUG] Žádní příjemci.")
         return
 
-    # 3. Odeslání přes PORT 465 (SSL)
     msg = MIMEMultipart()
     msg['From'] = SMTP_EMAIL
     msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
     msg.attach(MIMEText(f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor", 'plain'))
 
     try:
-        # ZMĚNA ZDE: Používáme SMTP_SSL a port 465
-        print(f"--- [DEBUG] Připojuji se k SMTP (SSL) na portu 465...")
-        s = smtplib.SMTP_SSL(SMTP_SERVER, 465)
-        
-        # U SSL se nevolá starttls()! Spojení je šifrované rovnou.
+        # ZMĚNA: Vracíme se k PORTU 587 (Standard pro Gmail s IPv4 fixem)
+        print(f"--- [DEBUG] Připojuji se k SMTP na portu 587...")
+        s = smtplib.SMTP(SMTP_SERVER, 587)
+        s.starttls()
         
         print(f"--- [DEBUG] Přihlašuji se...")
         s.login(SMTP_EMAIL, SMTP_PASSWORD)
@@ -765,7 +755,7 @@ with st.sidebar:
             
     st.markdown("---")
 
-# --- SIMULACE (VÝVOJÁŘSKÉ NÁSTROJE) ---
+    # --- SIMULACE (VÝVOJÁŘSKÉ NÁSTROJE) ---
     st.markdown("---")
     st.header("🛠️ Vývojářské nástroje")
     
@@ -774,14 +764,12 @@ with st.sidebar:
         conn, db_pool = get_db_connection()
         if st.button("🧪 SIMULOVAT ZMĚNU + 📧 EMAIL"):
             c = conn.cursor()
-            # 1. Vybereme náhodný "zelený" spis
             c.execute("SELECT id, oznaceni, pocet_udalosti, params_json FROM pripady WHERE ma_zmenu = FALSE ORDER BY RANDOM() LIMIT 1")
             row = c.fetchone()
             
             if row:
                 cid, nazev, old_cnt, params_str = row
                 
-                # 2. Provedeme změnu v DB (aby zčervenal)
                 novy_text = f"🧪 TESTOVACÍ ZMĚNA ({get_now().strftime('%H:%M:%S')})"
                 c.execute("""
                     UPDATE pripady
@@ -793,7 +781,6 @@ with st.sidebar:
                 """, (novy_text, old_cnt + 1, get_now(), cid))
                 conn.commit()
                 
-                # 3. RUČNĚ ODESLAME E-MAIL (Simulace robota)
                 try:
                     p = json.loads(params_str)
                     spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
@@ -806,7 +793,7 @@ with st.sidebar:
                 time.sleep(2)
                 st.rerun()
             else:
-                st.warning("Žádné vhodné spisy pro simulaci (všechny už jsou červené?).")
+                st.warning("Žádné vhodné spisy pro simulaci.")
     except Exception as e:
         st.error(f"Chyba DB: {e}")
     finally:
