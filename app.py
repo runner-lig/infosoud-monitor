@@ -329,38 +329,90 @@ def get_system_logs(dny=3):
 # 2. LOGIKA ODESÍLÁNÍ
 # -------------------------------------------------------------------------
 
+To je ta nejzáludnější chyba v programování – všechno vypadá nastavené správně, ale stejně to mlčí.
+
+Podle logů, které jste poslal, se děje toto:
+
+Funkce se spustí.
+
+Zeptá se databáze (vidíme Warning).
+
+A pak se okamžitě vypne.
+
+To znamená, že aplikace buď nevidí ty proměnné (i když jsou v Railway nastavené), nebo je seznam příjemců prázdný z jiného důvodu.
+
+Abychom přestali hádat, musíme aplikaci "rozmluvit". Upravíme funkci odesílání tak, aby nám do logu vypsala přesně to, co vidí.
+
+🛠️ KROK 1: Vyměňte tuto funkci v app.py
+V kódu najděte funkci odeslat_email_notifikaci (je zhruba uprostřed) a celou ji nahraďte touto "ukecanou" verzí.
+
+Tato verze vypíše do logu [DEBUG] informace, díky kterým hned poznáme, kde je problém.
+
+Python
+
 def odeslat_email_notifikaci(nazev, udalost, znacka):
-    if "novy.email" in SMTP_EMAIL: return
+    print(f"--- [DEBUG] ZAČÁTEK ODESÍLÁNÍ EMAILU: {nazev} ---")
+    
+    # 1. Kontrola nastavení odesílatele
+    if not SMTP_EMAIL:
+        print("--- [DEBUG] CHYBA: Nemám SMTP_EMAIL")
+        return
+        
+    if "novy.email" in SMTP_EMAIL: 
+        print("--- [DEBUG] STOP: SMTP_EMAIL obsahuje 'novy.email', funkce ukončena (pojistka).")
+        return
 
     conn = None; db_pool = None; prijemci = []
+    
+    # 2. Hledání v databázi
     try:
         conn, db_pool = get_db_connection()
+        print("--- [DEBUG] DB připojena, hledám uživatele...")
         df_users = pd.read_sql_query("SELECT email FROM uzivatele WHERE email IS NOT NULL AND email != ''", conn)
         prijemci = df_users['email'].tolist()
-    except: prijemci = []
+        print(f"--- [DEBUG] Nalezeno v DB: {len(prijemci)} adres: {prijemci}")
+    except Exception as e: 
+        print(f"--- [DEBUG] Chyba při čtení DB: {e}")
+        prijemci = []
     finally:
         if conn and db_pool: db_pool.putconn(conn)
     
+    # 3. Přidání Super Admina
+    print(f"--- [DEBUG] Super Admin Email z nastavení: '{SUPER_ADMIN_EMAIL}'")
     if SUPER_ADMIN_EMAIL and "@" in SUPER_ADMIN_EMAIL:
         prijemci.append(SUPER_ADMIN_EMAIL)
     
     prijemci = list(set(prijemci)) 
-    if not prijemci: return
+    print(f"--- [DEBUG] FINÁLNÍ SEZNAM PŘÍJEMCŮ: {prijemci}")
 
+    if not prijemci: 
+        print("--- [DEBUG] KONEC: Seznam příjemců je prázdný. Nemám komu psát.")
+        return
+
+    # 4. Samotné odeslání
     msg = MIMEMultipart()
     msg['From'] = SMTP_EMAIL
     msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
     msg.attach(MIMEText(f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor", 'plain'))
 
     try:
+        print(f"--- [DEBUG] Připojuji se k SMTP serveru {SMTP_SERVER}:{SMTP_PORT}...")
         s = smtplib.SMTP(SMTP_SERVER, int(SMTP_PORT))
-        s.starttls(); s.login(SMTP_EMAIL, SMTP_PASSWORD)
+        s.starttls()
+        
+        print(f"--- [DEBUG] Přihlašuji se jako {SMTP_EMAIL}...")
+        s.login(SMTP_EMAIL, SMTP_PASSWORD)
+        
         for p in prijemci:
+            print(f"--- [DEBUG] Odesílám na: {p}")
             del msg['To']; msg['To'] = p; s.sendmail(SMTP_EMAIL, p, msg.as_string())
+            
         s.quit()
+        print("--- [DEBUG] HOTOVO: E-maily odeslány.")
         log_do_historie("Odeslání notifikace", f"Odesláno na {len(prijemci)} adres.")
-    except Exception as e: print(f"Chyba emailu: {e}")
-
+    except Exception as e: 
+        print(f"--- [DEBUG] KRITICKÁ CHYBA SMTP: {e}")
+        
 # -------------------------------------------------------------------------
 # 3. PARSOVÁNÍ A SCRAPING
 # -------------------------------------------------------------------------
