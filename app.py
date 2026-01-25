@@ -512,7 +512,7 @@ def prejmenuj_pripad(cid, novy_nazev):
 @st.cache_resource
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(monitor_job, 'cron', minute=40)
+    scheduler.add_job(monitor_job, 'cron', minute=36)
     scheduler.start()
     return scheduler
 
@@ -561,7 +561,6 @@ def je_pripad_skonceny(text_udalosti):
 def monitor_job():
     if st.monitor_status.get("running", False): return
 
-    # START
     start_ts = get_now()
     st.monitor_status["running"] = True
     st.monitor_status["start_time"] = start_ts
@@ -607,9 +606,8 @@ def monitor_job():
             
         print(f"--- KONEC KONTROLY ---")
         
-        # --- ZÁPIS DO DB LOGU (NOVÉ) ---
         end_ts = get_now()
-        conn, db_pool = get_db_connection() # Musíme si vzít nové spojení
+        conn, db_pool = get_db_connection()
         c = conn.cursor()
         c.execute("INSERT INTO system_logs (start_time, end_time, mode, processed_count) VALUES (%s, %s, %s, %s)",
                   (start_ts, end_ts, rezim_text, dokonceno))
@@ -689,7 +687,6 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # --- AUTOMATICKY SE AKTUALIZUJÍCÍ PANEL ---
     @st.fragment(run_every=2)
     def render_status():
         st.markdown("### 🤖 Automatická kontrola")
@@ -722,6 +719,25 @@ with st.sidebar:
     render_status()
             
     st.markdown("---")
+
+    # --- SIMULACE (VÝVOJÁŘSKÉ NÁSTROJE) ---
+    st.markdown("---")
+    # Přidána sekce pro simulaci
+    conn = None; db_pool = None
+    try:
+        conn, db_pool = get_db_connection()
+        if st.button("🧪 SIMULOVAT ZMĚNU (Test)"):
+            c = conn.cursor()
+            # Update na první řádek - přidá 'ma_zmenu = TRUE' a fiktivní událost
+            c.execute("UPDATE pripady SET ma_zmenu = TRUE, posledni_udalost = '🧪 TESTOVACÍ ZMĚNA (Simulace)' WHERE id = (SELECT min(id) FROM pripady)")
+            conn.commit()
+            st.success("Změna nasimulována na prvním spisu!")
+            time.sleep(1)
+            st.rerun()
+    except Exception as e:
+        st.error(f"Chyba DB: {e}")
+    finally:
+        if conn and db_pool: db_pool.putconn(conn)
 
     # --- PŘIDÁNÍ SPISU ---
     st.header("➕ Přidat nový spis")
@@ -994,12 +1010,19 @@ elif selected_page == "🤖 Logy kontrol":
     df_logs = get_system_logs(dny=3)
     
     if not df_logs.empty:
-        # Převod na hezčí formát
         df_logs['start_time'] = pd.to_datetime(df_logs['start_time']).dt.strftime("%d.%m.%Y %H:%M")
-        # Výpočet trvání
-        df_logs['trvani'] = (pd.to_datetime(df_logs['end_time']) - pd.to_datetime(df_logs['start_time'], format="%d.%m.%Y %H:%M")).dt.total_seconds().apply(lambda x: f"{int(x // 60)} min {int(x % 60)} s")
         
-        # Sloupec "Ikona" podle režimu
+        def calc_duration(row):
+            if pd.isnull(row['end_time']): return "Běží..."
+            start = pd.to_datetime(row['start_time'], format="%d.%m.%Y %H:%M")
+            end = pd.to_datetime(row['end_time'])
+            if start.tzinfo is None and end.tzinfo is not None:
+                start = start.replace(tzinfo=end.tzinfo)
+            diff = (end - start).total_seconds()
+            return f"{int(diff // 60)} min {int(diff % 60)} s"
+
+        df_logs['trvani'] = df_logs.apply(calc_duration, axis=1)
+        
         def get_icon(mode_text):
             if "NOČNÍ" in str(mode_text): return "🌙"
             if "DENNÍ" in str(mode_text): return "☀️"
@@ -1007,7 +1030,6 @@ elif selected_page == "🤖 Logy kontrol":
             
         df_logs['ikona'] = df_logs['mode'].apply(get_icon)
         
-        # Zobrazíme jen to podstatné
         df_display = df_logs[['start_time', 'ikona', 'mode', 'processed_count', 'trvani']].copy()
         df_display.columns = ["Začátek", "", "Režim", "Zkontrolováno spisů", "Doba trvání"]
         
