@@ -329,27 +329,6 @@ def get_system_logs(dny=3):
 # 2. LOGIKA ODESÍLÁNÍ
 # -------------------------------------------------------------------------
 
-To je ta nejzáludnější chyba v programování – všechno vypadá nastavené správně, ale stejně to mlčí.
-
-Podle logů, které jste poslal, se děje toto:
-
-Funkce se spustí.
-
-Zeptá se databáze (vidíme Warning).
-
-A pak se okamžitě vypne.
-
-To znamená, že aplikace buď nevidí ty proměnné (i když jsou v Railway nastavené), nebo je seznam příjemců prázdný z jiného důvodu.
-
-Abychom přestali hádat, musíme aplikaci "rozmluvit". Upravíme funkci odesílání tak, aby nám do logu vypsala přesně to, co vidí.
-
-🛠️ KROK 1: Vyměňte tuto funkci v app.py
-V kódu najděte funkci odeslat_email_notifikaci (je zhruba uprostřed) a celou ji nahraďte touto "ukecanou" verzí.
-
-Tato verze vypíše do logu [DEBUG] informace, díky kterým hned poznáme, kde je problém.
-
-Python
-
 def odeslat_email_notifikaci(nazev, udalost, znacka):
     print(f"--- [DEBUG] ZAČÁTEK ODESÍLÁNÍ EMAILU: {nazev} ---")
     
@@ -412,7 +391,7 @@ def odeslat_email_notifikaci(nazev, udalost, znacka):
         log_do_historie("Odeslání notifikace", f"Odesláno na {len(prijemci)} adres.")
     except Exception as e: 
         print(f"--- [DEBUG] KRITICKÁ CHYBA SMTP: {e}")
-        
+
 # -------------------------------------------------------------------------
 # 3. PARSOVÁNÍ A SCRAPING
 # -------------------------------------------------------------------------
