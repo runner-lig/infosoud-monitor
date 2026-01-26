@@ -16,7 +16,6 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import json
-import smtplib
 import hashlib
 import time
 import random
@@ -25,8 +24,6 @@ import pytz
 import os
 import math
 from urllib.parse import urlparse, parse_qs
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from apscheduler.schedulers.background import BackgroundScheduler
 import extra_streamlit_components as stx
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -51,6 +48,8 @@ if not hasattr(st, "monitor_status"):
         "last_finished": None
     }
 
+
+
 # --- 🔐 NAČTENÍ TAJNÝCH ÚDAJŮ (SECRETS) ---
 def get_secret(key):
     value = os.getenv(key)
@@ -68,19 +67,46 @@ try:
     SUPER_ADMIN_USER = get_secret("SUPER_ADMIN_USER")
     SUPER_ADMIN_PASS = get_secret("SUPER_ADMIN_PASS")
     SUPER_ADMIN_EMAIL = get_secret("SUPER_ADMIN_EMAIL")
-    
-    SMTP_SERVER = "smtp.gmail.com"
-    SMTP_PORT = 587
-    SMTP_EMAIL = get_secret("SMTP_EMAIL")
-    SMTP_PASSWORD = get_secret("SMTP_PASSWORD")
 
-    if not DB_URI or not SMTP_EMAIL:
-        st.error("Chybí klíčová nastavení (DB_URI nebo EMAIL). Zkontrolujte Variables.")
+    # --- EMAIL VIA HTTP (RESEND) ---
+    RESEND_API_KEY = get_secret("RESEND_API_KEY")
+    EMAIL_FROM = get_secret("EMAIL_FROM") or "Infosoud Monitor <onboarding@resend.dev>"
+    EMAIL_SUBJECT_PREFIX = get_secret("EMAIL_SUBJECT_PREFIX") or ""
+
+    # ✅ TADY
+    if not RESEND_API_KEY:
+        st.warning("Chybí RESEND_API_KEY – e-maily se neodešlou.")
+
+    # ✅ a hned potom nech tenhle “tvrdý” check jen na DB:
+    if not DB_URI:
+        st.error("Chybí DB_URI. Zkontrolujte Variables.")
         st.stop()
 
 except Exception as e:
     st.error(f"Kritická chyba konfigurace: {e}")
     st.stop()
+
+
+
+def send_email_via_resend(to_email: str, subject: str, text_body: str) -> None:
+    if not RESEND_API_KEY:
+        raise RuntimeError("Chybí RESEND_API_KEY v Railway Variables")
+
+    url = "https://api.resend.com/emails"
+    headers = {
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "from": EMAIL_FROM,
+        "to": [to_email],
+        "subject": subject,
+        "text": text_body,
+    }
+
+    r = requests.post(url, headers=headers, json=payload, timeout=20)
+    if r.status_code >= 300:
+        raise RuntimeError(f"Resend error {r.status_code}: {r.text}")
 
 # --- 🏗️ DATABÁZOVÝ POOL ---
 @st.cache_resource
@@ -342,68 +368,48 @@ def get_system_logs(dny=3):
 
 def odeslat_email_notifikaci(nazev, udalost, znacka):
     print(f"--- [DEBUG] ZAČÁTEK ODESÍLÁNÍ EMAILU: {nazev} ---")
-    
-    if not SMTP_EMAIL:
-        print("--- [DEBUG] CHYBA: Nemám SMTP_EMAIL")
-        return
-        
-    if "novy.email" in SMTP_EMAIL: 
-        print("--- [DEBUG] STOP: SMTP_EMAIL obsahuje 'novy.email'.")
+
+    if not RESEND_API_KEY:
+        print("--- [DEBUG] RESEND_API_KEY chybí -> neodesílám email.")
         return
 
     conn = None; db_pool = None; prijemci = []
-    
     try:
         conn, db_pool = get_db_connection()
-        df_users = pd.read_sql_query("SELECT email FROM uzivatele WHERE email IS NOT NULL AND email != ''", conn)
-        prijemci = df_users['email'].tolist()
-    except Exception as e: 
+        df_users = pd.read_sql_query(
+            "SELECT email FROM uzivatele WHERE email IS NOT NULL AND email != ''",
+            conn
+        )
+        prijemci = df_users["email"].tolist()
+    except Exception as e:
         print(f"--- [DEBUG] Chyba DB: {e}")
         prijemci = []
     finally:
-        if conn and db_pool: db_pool.putconn(conn)
-    
+        if conn and db_pool:
+            db_pool.putconn(conn)
+
     if SUPER_ADMIN_EMAIL and "@" in SUPER_ADMIN_EMAIL:
         prijemci.append(SUPER_ADMIN_EMAIL)
-    
-    prijemci = list(set(prijemci)) 
+
+    prijemci = list(set(prijemci))
     print(f"--- [DEBUG] Adresáti: {prijemci}")
 
-    if not prijemci: 
+    if not prijemci:
         print("--- [DEBUG] Žádní příjemci.")
         return
 
-    msg = MIMEMultipart()
-    msg['From'] = SMTP_EMAIL
-    msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
-    msg.attach(MIMEText(f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor", 'plain'))
+    subject = f"{EMAIL_SUBJECT_PREFIX}🚨 Změna ve spisu: {nazev}".strip()
+    body = f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor"
 
     try:
-        # ZMĚNA: Vracíme se k PORTU 587 (Standard pro Gmail s IPv4 fixem)
-        print(f"--- [DEBUG] Připojuji se k SMTP na portu 587...")
-        s = smtplib.SMTP(SMTP_SERVER, 587)
-        s.starttls()
-        
-        print(f"--- [DEBUG] Přihlašuji se...")
-        s.login(SMTP_EMAIL, SMTP_PASSWORD)
-        
         for p in prijemci:
-            print(f"--- [DEBUG] Odesílám na: {p}")
-            msg = MIMEMultipart()
-            msg['From'] = SMTP_EMAIL
-            msg['To'] = p
-            msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
-            msg.attach(MIMEText(
-                f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor",
-                'plain'
-            ))
-            s.sendmail(SMTP_EMAIL, p, msg.as_string())
-            
-        s.quit()
-        print("--- [DEBUG] ✅ HOTOVO! Odesláno.")
-        log_do_historie("Odeslání notifikace", f"Odesláno na {len(prijemci)} adres.")
+            print(f"--- [DEBUG] Odesílám přes Resend na: {p}")
+            send_email_via_resend(p, subject, body)
+
+        print("--- [DEBUG] ✅ HOTOVO! Odesláno (Resend).")
+        log_do_historie("Odeslání notifikace", f"Odesláno na {len(prijemci)} adres (Resend).")
     except Exception as e:
-        print(f"--- [DEBUG] ❌ CHYBA ODESÍLÁNÍ: {repr(e)}")
+        print(f"--- [DEBUG] ❌ CHYBA ODESÍLÁNÍ (Resend): {repr(e)}")
         traceback.print_exc()
 
 # -------------------------------------------------------------------------
@@ -795,7 +801,7 @@ with st.sidebar:
                     p = json.loads(params_str)
                     spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
                     odeslat_email_notifikaci(nazev, novy_text, spis_zn)
-                    st.toast(f"📧 E-mail odeslán na {SMTP_EMAIL}!", icon="✅")
+                    st.toast("📧 E-mail odeslán (Resend)!", icon="✅")
                 except Exception as e:
                     st.error(f"Chyba při odesílání e-mailu: {e}")
 
