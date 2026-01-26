@@ -766,6 +766,30 @@ if st.session_state['user_role'] in ["Super Admin", "Administrátor"]:
 selected_page = st.sidebar.radio("Menu", menu_options)
 st.sidebar.markdown("---")
 
+# 👇👇👇 SEM VLOŽ TENTO NOVÝ BLOK KÓDU 👇👇👇
+
+with st.sidebar.expander("🛠️ Diagnostika (Admin)", expanded=False):
+    st.write("Test funkčnosti e-mailů.")
+    
+    if st.button("📧 Odeslat testovací e-mail", use_container_width=True):
+        # Ověření, zda je nadefinován e-mail
+        if not SMTP_EMAIL or not SMTP_PASSWORD:
+             st.error("Nemáš nastavené proměnné SMTP_EMAIL nebo SMTP_PASSWORD!")
+        else:
+            with st.spinner("Odesílám testovací zprávu..."):
+                try:
+                    # Simulujeme notifikaci
+                    odeslat_email_notifikaci(
+                        nazev="TESTOVACÍ SIMULACE", 
+                        udalost=f"Toto je test z Heroku. Čas: {datetime.datetime.now().strftime('%H:%M:%S')}", 
+                        znacka="Test 123/2024"
+                    )
+                    st.success("Odesláno! Zkontroluj si e-mail (i spam).")
+                except Exception as e:
+                    st.error(f"Chyba: {e}")
+
+# 👆👆👆 KONEC NOVÉHO BLOKU 👆👆👆
+
 # -------------------------------------------------------------------------
 # STRÁNKA: SPRÁVA UŽIVATELŮ
 # -------------------------------------------------------------------------
