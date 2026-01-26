@@ -1,13 +1,3 @@
-# --- 🚑 FIX PRO ODESÍLÁNÍ EMAILU (MUSÍ BÝT ÚPLNĚ PRVNÍ) ---
-import socket
-# Toto donutí Python ignorovat IPv6 a používat jen IPv4.
-original_getaddrinfo = socket.getaddrinfo
-def new_getaddrinfo(*args, **kwargs):
-    responses = original_getaddrinfo(*args, **kwargs)
-    return [res for res in responses if res[0] == socket.AF_INET]
-socket.getaddrinfo = new_getaddrinfo
-# -----------------------------------------------------------
-
 import streamlit as st
 import psycopg2
 from psycopg2 import pool
@@ -16,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import json
+import smtplib
 import hashlib
 import time
 import random
@@ -24,10 +15,11 @@ import pytz
 import os
 import math
 from urllib.parse import urlparse, parse_qs
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from apscheduler.schedulers.background import BackgroundScheduler
 import extra_streamlit_components as stx
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import traceback
 
 # --- KONFIGURACE UI ---
 st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
@@ -48,8 +40,6 @@ if not hasattr(st, "monitor_status"):
         "last_finished": None
     }
 
-
-
 # --- 🔐 NAČTENÍ TAJNÝCH ÚDAJŮ (SECRETS) ---
 def get_secret(key):
     value = os.getenv(key)
@@ -67,46 +57,19 @@ try:
     SUPER_ADMIN_USER = get_secret("SUPER_ADMIN_USER")
     SUPER_ADMIN_PASS = get_secret("SUPER_ADMIN_PASS")
     SUPER_ADMIN_EMAIL = get_secret("SUPER_ADMIN_EMAIL")
+    
+    SMTP_SERVER = "smtp.gmail.com"
+    SMTP_PORT = 587
+    SMTP_EMAIL = get_secret("SMTP_EMAIL")
+    SMTP_PASSWORD = get_secret("SMTP_PASSWORD")
 
-    # --- EMAIL VIA HTTP (RESEND) ---
-    RESEND_API_KEY = get_secret("RESEND_API_KEY")
-    EMAIL_FROM = get_secret("EMAIL_FROM") or "Infosoud Monitor <onboarding@resend.dev>"
-    EMAIL_SUBJECT_PREFIX = get_secret("EMAIL_SUBJECT_PREFIX") or ""
-
-    # ✅ TADY
-    if not RESEND_API_KEY:
-        st.warning("Chybí RESEND_API_KEY – e-maily se neodešlou.")
-
-    # ✅ a hned potom nech tenhle “tvrdý” check jen na DB:
-    if not DB_URI:
-        st.error("Chybí DB_URI. Zkontrolujte Variables.")
+    if not DB_URI or not SMTP_EMAIL:
+        st.error("Chybí klíčová nastavení (DB_URI nebo EMAIL). Zkontrolujte Variables.")
         st.stop()
 
 except Exception as e:
     st.error(f"Kritická chyba konfigurace: {e}")
     st.stop()
-
-
-
-def send_email_via_resend(to_email: str, subject: str, text_body: str) -> None:
-    if not RESEND_API_KEY:
-        raise RuntimeError("Chybí RESEND_API_KEY v Railway Variables")
-
-    url = "https://api.resend.com/emails"
-    headers = {
-        "Authorization": f"Bearer {RESEND_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "from": EMAIL_FROM,
-        "to": [to_email],
-        "subject": subject,
-        "text": text_body,
-    }
-
-    r = requests.post(url, headers=headers, json=payload, timeout=20)
-    if r.status_code >= 300:
-        raise RuntimeError(f"Resend error {r.status_code}: {r.text}")
 
 # --- 🏗️ DATABÁZOVÝ POOL ---
 @st.cache_resource
@@ -367,50 +330,36 @@ def get_system_logs(dny=3):
 # -------------------------------------------------------------------------
 
 def odeslat_email_notifikaci(nazev, udalost, znacka):
-    print(f"--- [DEBUG] ZAČÁTEK ODESÍLÁNÍ EMAILU: {nazev} ---")
-
-    if not RESEND_API_KEY:
-        print("--- [DEBUG] RESEND_API_KEY chybí -> neodesílám email.")
-        return
+    if "novy.email" in SMTP_EMAIL: return
 
     conn = None; db_pool = None; prijemci = []
     try:
         conn, db_pool = get_db_connection()
-        df_users = pd.read_sql_query(
-            "SELECT email FROM uzivatele WHERE email IS NOT NULL AND email != ''",
-            conn
-        )
-        prijemci = df_users["email"].tolist()
-    except Exception as e:
-        print(f"--- [DEBUG] Chyba DB: {e}")
-        prijemci = []
+        df_users = pd.read_sql_query("SELECT email FROM uzivatele WHERE email IS NOT NULL AND email != ''", conn)
+        prijemci = df_users['email'].tolist()
+    except: prijemci = []
     finally:
-        if conn and db_pool:
-            db_pool.putconn(conn)
-
+        if conn and db_pool: db_pool.putconn(conn)
+    
     if SUPER_ADMIN_EMAIL and "@" in SUPER_ADMIN_EMAIL:
         prijemci.append(SUPER_ADMIN_EMAIL)
+    
+    prijemci = list(set(prijemci)) 
+    if not prijemci: return
 
-    prijemci = list(set(prijemci))
-    print(f"--- [DEBUG] Adresáti: {prijemci}")
-
-    if not prijemci:
-        print("--- [DEBUG] Žádní příjemci.")
-        return
-
-    subject = f"{EMAIL_SUBJECT_PREFIX}🚨 Změna ve spisu: {nazev}".strip()
-    body = f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor"
+    msg = MIMEMultipart()
+    msg['From'] = SMTP_EMAIL
+    msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
+    msg.attach(MIMEText(f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor", 'plain'))
 
     try:
+        s = smtplib.SMTP(SMTP_SERVER, int(SMTP_PORT))
+        s.starttls(); s.login(SMTP_EMAIL, SMTP_PASSWORD)
         for p in prijemci:
-            print(f"--- [DEBUG] Odesílám přes Resend na: {p}")
-            send_email_via_resend(p, subject, body)
-
-        print("--- [DEBUG] ✅ HOTOVO! Odesláno (Resend).")
-        log_do_historie("Odeslání notifikace", f"Odesláno na {len(prijemci)} adres (Resend).")
-    except Exception as e:
-        print(f"--- [DEBUG] ❌ CHYBA ODESÍLÁNÍ (Resend): {repr(e)}")
-        traceback.print_exc()
+            del msg['To']; msg['To'] = p; s.sendmail(SMTP_EMAIL, p, msg.as_string())
+        s.quit()
+        log_do_historie("Odeslání notifikace", f"Odesláno na {len(prijemci)} adres.")
+    except Exception as e: print(f"Chyba emailu: {e}")
 
 # -------------------------------------------------------------------------
 # 3. PARSOVÁNÍ A SCRAPING
@@ -563,7 +512,7 @@ def prejmenuj_pripad(cid, novy_nazev):
 @st.cache_resource
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(monitor_job, 'cron', minute=36)
+    scheduler.add_job(monitor_job, 'cron', minute=40)
     scheduler.start()
     return scheduler
 
@@ -612,6 +561,7 @@ def je_pripad_skonceny(text_udalosti):
 def monitor_job():
     if st.monitor_status.get("running", False): return
 
+    # START
     start_ts = get_now()
     st.monitor_status["running"] = True
     st.monitor_status["start_time"] = start_ts
@@ -657,8 +607,9 @@ def monitor_job():
             
         print(f"--- KONEC KONTROLY ---")
         
+        # --- ZÁPIS DO DB LOGU (NOVÉ) ---
         end_ts = get_now()
-        conn, db_pool = get_db_connection()
+        conn, db_pool = get_db_connection() # Musíme si vzít nové spojení
         c = conn.cursor()
         c.execute("INSERT INTO system_logs (start_time, end_time, mode, processed_count) VALUES (%s, %s, %s, %s)",
                   (start_ts, end_ts, rezim_text, dokonceno))
@@ -738,6 +689,7 @@ with st.sidebar:
         
     st.markdown("---")
     
+    # --- AUTOMATICKY SE AKTUALIZUJÍCÍ PANEL ---
     @st.fragment(run_every=2)
     def render_status():
         st.markdown("### 🤖 Automatická kontrola")
@@ -770,50 +722,6 @@ with st.sidebar:
     render_status()
             
     st.markdown("---")
-
-    # --- SIMULACE (VÝVOJÁŘSKÉ NÁSTROJE) ---
-    st.markdown("---")
-    st.header("🛠️ Vývojářské nástroje")
-    
-    conn = None; db_pool = None
-    try:
-        conn, db_pool = get_db_connection()
-        if st.button("🧪 SIMULOVAT ZMĚNU + 📧 EMAIL"):
-            c = conn.cursor()
-            c.execute("SELECT id, oznaceni, pocet_udalosti, params_json FROM pripady WHERE ma_zmenu = FALSE ORDER BY RANDOM() LIMIT 1")
-            row = c.fetchone()
-            
-            if row:
-                cid, nazev, old_cnt, params_str = row
-                
-                novy_text = f"🧪 TESTOVACÍ ZMĚNA ({get_now().strftime('%H:%M:%S')})"
-                c.execute("""
-                    UPDATE pripady
-                    SET ma_zmenu = TRUE,
-                        posledni_udalost = %s,
-                        pocet_udalosti = %s,
-                        posledni_kontrola = %s
-                    WHERE id = %s
-                """, (novy_text, old_cnt + 1, get_now(), cid))
-                conn.commit()
-                
-                try:
-                    p = json.loads(params_str)
-                    spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
-                    odeslat_email_notifikaci(nazev, novy_text, spis_zn)
-                    st.toast("📧 E-mail odeslán (Resend)!", icon="✅")
-                except Exception as e:
-                    st.error(f"Chyba při odesílání e-mailu: {e}")
-
-                st.success(f"Simulace hotova u spisu: {nazev}")
-                time.sleep(2)
-                st.rerun()
-            else:
-                st.warning("Žádné vhodné spisy pro simulaci.")
-    except Exception as e:
-        st.error(f"Chyba DB: {e}")
-    finally:
-        if conn and db_pool: db_pool.putconn(conn)
 
     # --- PŘIDÁNÍ SPISU ---
     st.header("➕ Přidat nový spis")
@@ -1086,19 +994,12 @@ elif selected_page == "🤖 Logy kontrol":
     df_logs = get_system_logs(dny=3)
     
     if not df_logs.empty:
+        # Převod na hezčí formát
         df_logs['start_time'] = pd.to_datetime(df_logs['start_time']).dt.strftime("%d.%m.%Y %H:%M")
+        # Výpočet trvání
+        df_logs['trvani'] = (pd.to_datetime(df_logs['end_time']) - pd.to_datetime(df_logs['start_time'], format="%d.%m.%Y %H:%M")).dt.total_seconds().apply(lambda x: f"{int(x // 60)} min {int(x % 60)} s")
         
-        def calc_duration(row):
-            if pd.isnull(row['end_time']): return "Běží..."
-            start = pd.to_datetime(row['start_time'], format="%d.%m.%Y %H:%M")
-            end = pd.to_datetime(row['end_time'])
-            if start.tzinfo is None and end.tzinfo is not None:
-                start = start.replace(tzinfo=end.tzinfo)
-            diff = (end - start).total_seconds()
-            return f"{int(diff // 60)} min {int(diff % 60)} s"
-
-        df_logs['trvani'] = df_logs.apply(calc_duration, axis=1)
-        
+        # Sloupec "Ikona" podle režimu
         def get_icon(mode_text):
             if "NOČNÍ" in str(mode_text): return "🌙"
             if "DENNÍ" in str(mode_text): return "☀️"
@@ -1106,6 +1007,7 @@ elif selected_page == "🤖 Logy kontrol":
             
         df_logs['ikona'] = df_logs['mode'].apply(get_icon)
         
+        # Zobrazíme jen to podstatné
         df_display = df_logs[['start_time', 'ikona', 'mode', 'processed_count', 'trvani']].copy()
         df_display.columns = ["Začátek", "", "Režim", "Zkontrolováno spisů", "Doba trvání"]
         
