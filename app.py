@@ -778,7 +778,7 @@ with st.sidebar:
                 is_run, prog, tot, mode, last_upd = res
                 
                 # Kontrola "Deadman switch" - pokud je last_update starší než 10 min, něco je špatně
-                is_stale = (get_now() - last_upd).total_seconds() > 600 if last_upd else False
+                is_stale = (get_now().replace(tzinfo=None) - last_upd.replace(tzinfo=None)).total_seconds() > 600 if last_upd else False
 
                 if is_run and not is_stale:
                     st.info(f"**Režim:** {mode}")
