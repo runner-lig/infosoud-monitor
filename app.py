@@ -925,7 +925,7 @@ with st.sidebar:
         
     st.divider()
 
-menu_options = ["📊 Přehled kauz", "📜 Auditní historie", "🤖 Logy kontrol"]
+menu_options = ["📊 Přehled kauz", "📜 Auditní historie", "⚡ Logy kontrol"]
 if st.session_state['user_role'] in ["Super Admin", "Administrátor"]:
     menu_options.append("👥 Správa uživatelů")
 
