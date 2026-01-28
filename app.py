@@ -764,6 +764,7 @@ with st.sidebar:
         
     st.markdown("---")
     
+    # 1. DEFINICE FUNKCE (Musí být odsazená v sidebar bloku)
     @st.fragment(run_every=5)
     def render_status():
         st.markdown("### 🤖 Stav systému")
@@ -776,9 +777,9 @@ with st.sidebar:
 
             if res:
                 is_run, prog, tot, mode, last_upd = res
-                
-                # Kontrola "Deadman switch" - pokud je last_update starší než 10 min, něco je špatně
-                is_stale = (get_now().replace(tzinfo=None) - last_upd.replace(tzinfo=None)).total_seconds() > 600 if last_upd else False
+                now_naive = get_now().replace(tzinfo=None)
+                last_upd_naive = last_upd.replace(tzinfo=None) if last_upd else None
+                is_stale = (now_naive - last_upd_naive).total_seconds() > 600 if last_upd_naive else False
 
                 if is_run and not is_stale:
                     st.info(f"**Režim:** {mode}")
