@@ -402,9 +402,10 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
     msg['From'] = SMTP_EMAIL
     msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
 
-    # 1. Čistý text (pro staré klienty)
+    # 1. Čistý text (zjednodušený)
     text_body = f"""
-    Změna u případu: {nazev}
+    {nazev}
+    
     Soud: {soud}
     Spisová značka: {znacka}
 
@@ -418,23 +419,27 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
     Infosoud Monitor (Odesláno: {cas_odeslani})
     """
 
-    # 2. HTML verze (upravená - nadpis bez červené barvy)
+    # 2. HTML verze (čistší hlavička)
     html_body = f"""
     <html>
       <body>
-        <h3>🚨 Změna u případu: {nazev}</h3>
+        <h3>{nazev}</h3>
+        
         <p>
            <b>Soud:</b> {soud}<br>
            <b>Spisová značka:</b> {znacka}
         </p>
+        
         <div style="background-color: #f5f5f5; padding: 15px; border-left: 5px solid #d32f2f; margin: 15px 0;">
             <b>Nová událost:</b><br>
             {udalost}
         </div>
+        
         <br>
-        <a href="{url}" style="background-color: #d32f2f; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px;">
+        <a href="{url}" style="background-color: #d32f2f; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; font-weight: bold;">
            👉 Otevřít na Infosoudu
         </a>
+        
         <br><br>
         <hr style="border: 0; border-top: 1px solid #eee;">
         <small style="color: grey;">
@@ -457,7 +462,7 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
         s.quit()
         log_do_historie("Odeslání notifikace", f"Odesláno na {len(prijemci)} adres.")
     except Exception as e: print(f"Chyba emailu: {e}")
-
+    
 # -------------------------------------------------------------------------
 # 3. PARSOVÁNÍ A SCRAPING
 # -------------------------------------------------------------------------
@@ -697,7 +702,7 @@ def monitor_job(status_hook=None):  # Přidejte tento parametr do závorky!
         # Načteme všechny případy z DB
         conn, db_pool = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT id, params_json, pocet_udalosti, oznaceni, posledni_udalost FROM pripady, url FROM pripady")
+        c.execute("SELECT id, params_json, pocet_udalosti, oznaceni, posledni_udalost, url FROM pripady")
         all_rows = c.fetchall()
         
         # Uvolníme spojení z poolu před spuštěním threadů (aby měly thready volno)
