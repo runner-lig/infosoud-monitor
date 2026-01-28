@@ -933,21 +933,23 @@ with st.sidebar.expander("🛠️ Diagnostika (Admin)", expanded=False):
     st.write("Test funkčnosti e-mailů.")
     
     if st.button("📧 Odeslat testovací e-mail", use_container_width=True):
-        # Ověření, zda je nadefinován e-mail
         if not SMTP_EMAIL or not SMTP_PASSWORD:
              st.error("Nemáš nastavené proměnné SMTP_EMAIL nebo SMTP_PASSWORD!")
         else:
             with st.spinner("Odesílám testovací zprávu..."):
                 try:
-                    # Simulujeme notifikaci s novými parametry
+                    # Simulujeme notifikaci tak, aby vypadala jako reálná
+                    dnesni_datum = get_now().strftime("%d.%m.%Y")
+                    
                     odeslat_email_notifikaci(
                         nazev="TESTOVACÍ SIMULACE", 
-                        udalost=f"Toto je test z Heroku.\nČas serveru: {get_now().strftime('%d.%m.%Y %H:%M:%S')}", 
+                        # ZDE JE ZMĚNA: Formát "Datum - Text"
+                        udalost=f"{dnesni_datum} - Testovací událost (Podán opravný prostředek)", 
                         znacka="Test 123/2024",
-                        soud="Nejvyšší soud (Test)",      # Nový parametr: Soud
-                        url="https://infosoud.justice.cz" # Nový parametr: Odkaz
+                        soud="Nejvyšší soud (Test)",      
+                        url="https://infosoud.justice.cz" 
                     )
-                    st.success("Odesláno! Zkontroluj si e-mail (i spam).")
+                    st.success("Odesláno! Zkontroluj si e-mail.")
                 except Exception as e:
                     st.error(f"Chyba: {e}")
 
