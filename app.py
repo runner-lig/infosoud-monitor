@@ -832,7 +832,7 @@ with st.sidebar:
     # 1. DEFINICE FUNKCE (Musí být odsazená v sidebar bloku)
     @st.fragment(run_every=5)
     def render_status():
-        st.markdown("### 🤖 Stav systému")
+        st.markdown("### Stav systému")
         try:
             conn, db_pool = get_db_connection()
             with conn.cursor() as c:
@@ -872,7 +872,7 @@ with st.sidebar:
                     st.caption(f"Zpracováno **{prog}** z **{tot}**")
                     st.caption(f"⏱️ Poslední update: {time_str} (před {int(diff_seconds)}s)")
                 else:
-                    st.success("✅ Systém je v pohotovosti (spí)")
+                    st.success("✅ Systém je v pohotovosti")
                     
                     last_active = last_upd.strftime('%d.%m. %H:%M') if last_upd else 'Nikdy'
                     st.caption(f"Naposledy aktivní: {last_active}")
@@ -1210,8 +1210,8 @@ elif selected_page == "📊 Přehled kauz":
 # -------------------------------------------------------------------------
 # STRÁNKA: LOGY KONTROL
 # -------------------------------------------------------------------------
-elif selected_page == "🤖 Logy kontrol":
-    st.header("🤖 Historie automatických kontrol (poslední 3 dny)")
+elif selected_page == "⚡ Logy kontrol":
+    st.header("⚡ Historie automatických kontrol (poslední 3 dny)")
     
     df_logs = get_system_logs(dny=3)
     
