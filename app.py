@@ -307,9 +307,12 @@ def get_user_role(username):
 # --- LOGOVÁNÍ ---
 
 def log_do_historie(akce, popis):
-    if 'current_user' in st.session_state:
-        user = st.session_state['current_user']
-    else:
+    # Zkusíme vytáhnout uživatele. 
+    # .get() vrátí None, pokud klíč neexistuje.
+    user = st.session_state.get('current_user')
+    
+    # Pokud je user None (nepřihlášený worker) nebo prázdný řetězec, nastavíme Robota
+    if not user:
         user = "🤖 Systém (Robot)"
     
     conn = None; db_pool = None
