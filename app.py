@@ -377,7 +377,7 @@ def vycistit_stare_logy(dny=30):
 # 2. LOGIKA ODESÍLÁNÍ
 # -------------------------------------------------------------------------
 
-def odeslat_email_notifikaci(nazev, udalost, znacka):
+def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
     if "novy.email" in SMTP_EMAIL: return
 
     conn = None; db_pool = None; prijemci = []
@@ -395,10 +395,51 @@ def odeslat_email_notifikaci(nazev, udalost, znacka):
     prijemci = list(set(prijemci)) 
     if not prijemci: return
 
-    msg = MIMEMultipart()
+    msg = MIMEMultipart("alternative") # Změna na alternative pro HTML
     msg['From'] = SMTP_EMAIL
     msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
-    msg.attach(MIMEText(f"Novinka u {nazev} ({znacka}):\n\n{udalost}\n\n--\nInfosoud Monitor", 'plain'))
+
+    # 1. Čistý text (pro staré klienty)
+    text_body = f"""
+    Změna u případu: {nazev}
+    Soud: {soud}
+    Spisová značka: {znacka}
+
+    Nová událost:
+    {udalost}
+
+    Otevřít na Infosoudu:
+    {url}
+    
+    --
+    Infosoud Monitor
+    """
+
+    # 2. HTML verze (pro moderní klienty s prolinkem)
+    html_body = f"""
+    <html>
+      <body>
+        <h3>🚨 Změna u případu: {nazev}</h3>
+        <p>
+           <b>Soud:</b> {soud}<br>
+           <b>Spisová značka:</b> {znacka}
+        </p>
+        <hr>
+        <p><b>Nová událost:</b><br>{udalost}</p>
+        <br>
+        <a href="{url}" style="background-color: #d32f2f; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px;">
+           👉 Otevřít na Infosoudu
+        </a>
+        <br><br>
+        <small style="color: grey;">Infosoud Monitor</small>
+      </body>
+    </html>
+    """
+
+    part1 = MIMEText(text_body, "plain")
+    part2 = MIMEText(html_body, "html")
+    msg.attach(part1)
+    msg.attach(part2)
 
     try:
         s = smtplib.SMTP(SMTP_SERVER, int(SMTP_PORT))
@@ -565,11 +606,17 @@ def start_scheduler():
     return scheduler
 
 def zkontroluj_jeden_pripad(row):
-    cid, params_str, old_cnt, name, _ = row
+    # PŘIDÁNO: url na konci rozbalení řádku
+    cid, params_str, old_cnt, name, _, url = row
     
     conn = None; db_pool = None
     try:
         p = json.loads(params_str)
+        
+        # PŘIDÁNO: Zjištění názvu soudu
+        kod_soudu = p.get('soud')
+        nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
+
         time.sleep(random.uniform(1.0, 3.0))
         new_data = stahni_data_z_infosoudu(p)
         
@@ -589,7 +636,9 @@ def zkontroluj_jeden_pripad(row):
                 except: pass
                 
                 spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
-                odeslat_email_notifikaci(name, new_data[-1], spis_zn)
+                
+                # UPRAVENO: Předáváme i nazev_soudu a url
+                odeslat_email_notifikaci(name, new_data[-1], spis_zn, nazev_soudu, url)
             else:
                 c.execute("UPDATE pripady SET posledni_kontrola=%s WHERE id=%s", (now, cid))
                 conn.commit()
@@ -640,7 +689,7 @@ def monitor_job(status_hook=None):  # Přidejte tento parametr do závorky!
         # Načteme všechny případy z DB
         conn, db_pool = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT id, params_json, pocet_udalosti, oznaceni, posledni_udalost FROM pripady")
+        c.execute("SELECT id, params_json, pocet_udalosti, oznaceni, posledni_udalost FROM pripady, url FROM pripady")
         all_rows = c.fetchall()
         
         # Uvolníme spojení z poolu před spuštěním threadů (aby měly thready volno)
@@ -886,7 +935,9 @@ with st.sidebar.expander("🛠️ Diagnostika (Admin)", expanded=False):
                     odeslat_email_notifikaci(
                         nazev="TESTOVACÍ SIMULACE", 
                         udalost=f"Toto je test z Heroku. Čas: {datetime.datetime.now().strftime('%H:%M:%S')}", 
-                        znacka="Test 123/2024"
+                        znacka="Test 123/2024",
+                        soud="Nejvyšší soud testovací",  # Nový parametr
+                        url="https://infosoud.justice.cz" # Nový parametr
                     )
                     st.success("Odesláno! Zkontroluj si e-mail (i spam).")
                 except Exception as e:
