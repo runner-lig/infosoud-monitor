@@ -935,7 +935,6 @@ if selected_page == "👥 Správa uživatelů":
                         delete_user(row['username']); st.rerun()
 
 # -------------------------------------------------------------------------
-# -------------------------------------------------------------------------
 # STRÁNKA: PŘEHLED KAUZ (S CHYTRÝM HLEDÁNÍM)
 # -------------------------------------------------------------------------
 elif selected_page == "📊 Přehled kauz":
@@ -963,14 +962,16 @@ elif selected_page == "📊 Přehled kauz":
         finally: 
             if conn and db_pool: db_pool.putconn(conn)
 
-    # --- HLAVNÍ VÝPIS KAUZ ---
+    # --- 1. NAČTENÍ DAT ---
     df_zmeny = get_zmeny_all()
+    df_all_green = get_all_green_cases_raw()
 
+    # --- 2. VYHLEDÁVACÍ LIŠTA ---
     c_search_input, c_search_btn = st.columns([4, 1])
     with c_search_input:
         search_query_input = st.text_input("Hledat v archivu (Název, značka, soud, text)", 
                                            label_visibility="collapsed", 
-                                           placeholder="🔍 Hledat v archivu... (např. 20 C 70 / 2014)")
+                                           placeholder="🔍 Hledat kauzu... (např. 20 C 70 / 2014)")
     with c_search_btn:
         search_clicked = st.button("🔍 Hledat", use_container_width=True)
 
@@ -981,16 +982,23 @@ elif selected_page == "📊 Přehled kauz":
         if search_clicked: st.rerun()
 
     active_search_query = st.session_state['last_search']
-    df_all_green = get_all_green_cases_raw()
     
-    if not df_all_green.empty and active_search_query:
+    # --- 3. FILTROVACÍ LOGIKA (PRO OBĚ SEKCE) ---
+    df_filtered_green = df_all_green
+    
+    # Pokud uživatel něco hledá, aplikujeme filtr na ČERVENÉ i ZELENÉ
+    if active_search_query:
         q_lower = active_search_query.lower()
         q_no_space = q_lower.replace(" ", "")
         
         def filter_row(row):
+            # Hledáme v názvu
             if q_lower in str(row['oznaceni']).lower(): return True
+            # Hledáme v soudu
             if q_lower in str(row['realny_nazev_soudu']).lower(): return True
+            # Hledáme v poslední události
             if q_lower in str(row['posledni_udalost']).lower(): return True
+            # Hledáme ve spisové značce (i bez mezer)
             try:
                 p = json.loads(row['params_json'])
                 znacka = f"{p.get('senat')}{p.get('druh')}{p.get('cislo')}/{p.get('rocnik')}".lower()
@@ -998,28 +1006,43 @@ elif selected_page == "📊 Přehled kauz":
             except: pass
             return False
 
-        mask = df_all_green.apply(filter_row, axis=1)
-        df_filtered = df_all_green[mask]
-    else:
-        df_filtered = df_all_green
-
-    total_green = len(df_filtered)
+        # Aplikace filtru na červené (Změny)
+        if not df_zmeny.empty:
+            mask_red = df_zmeny.apply(filter_row, axis=1)
+            df_zmeny = df_zmeny[mask_red]
+            
+        # Aplikace filtru na zelené (Archiv)
+        if not df_all_green.empty:
+            mask_green = df_all_green.apply(filter_row, axis=1)
+            df_filtered_green = df_all_green[mask_green]
+    
+    # --- 4. STRÁNKOVÁNÍ (Jen pro zelené) ---
+    total_green = len(df_filtered_green)
     total_pages = math.ceil(total_green / ITEMS_PER_PAGE)
     if total_pages < 1: total_pages = 1
     
     start_idx = (st.session_state['page'] - 1) * ITEMS_PER_PAGE
     end_idx = start_idx + ITEMS_PER_PAGE
-    df_ostatni = df_filtered.iloc[start_idx:end_idx]
+    df_ostatni = df_filtered_green.iloc[start_idx:end_idx]
 
+    # --- DEFINICE AKCÍ ---
     def akce_videl_jsem(id_spisu): resetuj_upozorneni(id_spisu)
     def akce_smazat(id_spisu): smaz_pripad(id_spisu)
     def akce_videl_jsem_vse(): resetuj_vsechna_upozorneni()
 
-    # --- A) ČERVENÁ SEKCE ---
+    # --- 5. VYKRESLENÍ: ČERVENÁ SEKCE ---
+    # Zobrazíme sekci, pokud máme data (buď nová, nebo vyfiltrovaná)
     if not df_zmeny.empty:
         col_head, col_btn = st.columns([3, 1])
-        with col_head: st.subheader(f"🚨 Případy se změnou ({len(df_zmeny)})")
-        with col_btn: st.button("👁️ Viděl jsem vše", on_click=akce_videl_jsem_vse, type="primary", use_container_width=True)
+        with col_head: 
+            if active_search_query:
+                st.subheader(f"🚨 Nalezené změny ({len(df_zmeny)})")
+            else:
+                st.subheader(f"🚨 Případy se změnou ({len(df_zmeny)})")
+                
+        with col_btn: 
+            # Tlačítko "Viděl jsem vše" zobrazíme jen když se nehledá, nebo dáváme pozor
+            st.button("👁️ Viděl jsem vše", on_click=akce_videl_jsem_vse, type="primary", use_container_width=True)
 
         for index, row in df_zmeny.iterrows():
             try:
@@ -1054,16 +1077,20 @@ elif selected_page == "📊 Přehled kauz":
                         if st.button("Ano", key=f"confirm_del_red_{row['id']}", type="primary"):
                             akce_smazat(row['id']); st.rerun()
 
-    # --- B) ZELENÁ SEKCE ---
+    # --- 6. VYKRESLENÍ: ZELENÁ SEKCE ---
+    # Pokud červená sekce nebyla prázdná, dáme oddělovač
     if not df_zmeny.empty: st.markdown("---")
     
     if active_search_query:
-        st.subheader(f"🔍 Výsledky hledání: '{active_search_query}' (Nalezeno: {total_green})")
+        st.subheader(f"🔍 Nalezeno v archivu ({total_green})")
     else:
-        st.subheader(f"✅ Případy beze změn (Celkem: {total_green})")
+        st.subheader(f"✅ Případy beze změn ({total_green})")
     
     if df_ostatni.empty:
-        st.info("Žádné případy nenalezeny.")
+        if active_search_query and df_zmeny.empty:
+             st.warning(f"Hledání '{active_search_query}' nenašlo žádné výsledky.")
+        elif not active_search_query:
+             st.info("Žádné sledované případy.")
     else:
         for index, row in df_ostatni.iterrows():
             try:
