@@ -189,6 +189,16 @@ def init_db():
                       end_time TIMESTAMP,
                       mode TEXT,
                       processed_count INTEGER)''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS system_status
+             (id INTEGER PRIMARY KEY,
+              is_running BOOLEAN,
+              progress INTEGER,
+              total INTEGER,
+              mode TEXT,
+              last_update TIMESTAMP)''')
+# Inicializujeme první řádek, pokud neexistuje
+c.execute("INSERT INTO system_status (id, is_running) SELECT 1, False WHERE NOT EXISTS (SELECT 1 FROM system_status WHERE id = 1)")
                      
         conn.commit()
     except Exception as e:
