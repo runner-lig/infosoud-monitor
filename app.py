@@ -432,7 +432,7 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
             {udalost}
         </div>
         <br>
-        <a href="{url}" style="background-color: #d32f2f; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+        <a href="{url}" style="background-color: #d32f2f; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px;">
            👉 Otevřít na Infosoudu
         </a>
         <br><br>
