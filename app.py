@@ -157,6 +157,7 @@ def init_db():
         conn, db_pool = get_db_connection()
         c = conn.cursor()
         
+        # 1. Tabulka případů
         c.execute('''CREATE TABLE IF NOT EXISTS pripady
                      (id SERIAL PRIMARY KEY,
                       oznaceni TEXT,
@@ -168,6 +169,7 @@ def init_db():
                       posledni_kontrola TIMESTAMP,
                       realny_nazev_soudu TEXT)''')
         
+        # 2. Tabulka uživatelů
         c.execute('''CREATE TABLE IF NOT EXISTS uzivatele
                      (id SERIAL PRIMARY KEY,
                       username TEXT UNIQUE,
@@ -175,6 +177,7 @@ def init_db():
                       email TEXT,
                       role TEXT)''')
 
+        # 3. Tabulka historie akcí
         c.execute('''CREATE TABLE IF NOT EXISTS historie
                      (id SERIAL PRIMARY KEY,
                       datum TIMESTAMP,
@@ -182,7 +185,7 @@ def init_db():
                       akce TEXT,
                       popis TEXT)''')
         
-        # --- NOVÁ TABULKA PRO LOGY KONTROL ---
+        # 4. Tabulka logů kontrol
         c.execute('''CREATE TABLE IF NOT EXISTS system_logs
                      (id SERIAL PRIMARY KEY,
                       start_time TIMESTAMP,
@@ -190,7 +193,7 @@ def init_db():
                       mode TEXT,
                       processed_count INTEGER)''')
         
-# --- TABULKA PRO STAV SYSTÉMU ---
+        # 5. Tabulka pro stav systému (Most mezi workerem a UI)
         c.execute('''CREATE TABLE IF NOT EXISTS system_status
                      (id INTEGER PRIMARY KEY,
                       is_running BOOLEAN,
@@ -199,11 +202,23 @@ def init_db():
                       mode TEXT,
                       last_update TIMESTAMP)''')
         
-        # TENTO ŘÁDEK MUSÍ BÝT ODSZENÝ STEJNĚ JAKO C.EXECUTE VÝŠE!
-        c.execute("INSERT INTO system_status (id, is_running, progress, total, mode) SELECT 1, False, 0, 0, 'Spí' WHERE NOT EXISTS (SELECT 1 FROM system_status WHERE id = 1)")
+        # Inicializace stavového řádku (musí být odsazeno uvnitř try bloku)
+        c.execute("""
+            INSERT INTO system_status (id, is_running, progress, total, mode) 
+            SELECT 1, False, 0, 0, 'Spí' 
+            WHERE NOT EXISTS (SELECT 1 FROM system_status WHERE id = 1)
+        """)
                      
         conn.commit()
+    except Exception as e:
+        # Pokud dojde k chybě, zobrazíme ji v aplikaci
+        st.error(f"Kritická chyba při inicializaci databáze: {e}")
+    finally:
+        # Velmi důležité: Vždy vrátíme spojení do poolu, i když dojde k chybě
+        if conn and db_pool:
+            db_pool.putconn(conn)
 
+# Volání funkce pro spuštění inicializace
 init_db()
 
 # --- SPRÁVA UŽIVATELŮ ---
