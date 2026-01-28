@@ -603,96 +603,99 @@ def je_pripad_skonceny(text_udalosti):
     txt = text_udalosti.lower()
     return "skončení věci" in txt or "pravomoc" in txt or "vyřízeno" in txt
 
-def monitor_job():
-    # --- TATO ČÁST JE KLÍČOVÁ PRO PROPOJENÍ S UI ---
-    def update_status_all(key, value):
-        # 1. Zápis do paměti (pro ruční spuštění z webu)
-        if hasattr(st, "monitor_status"):
-            st.monitor_status[key] = value
-        
-        # 2. Zápis do SQL (aby to viděl uživatel, když běží worker na pozadí)
-        try:
-            conn_upd, pool_upd = get_db_connection()
-            c_upd = conn_upd.cursor()
-            if key == "running":
-                c_upd.execute("UPDATE system_status SET is_running = %s, last_update = %s WHERE id = 1", (value, get_now()))
-            elif key == "progress":
-                c_upd.execute("UPDATE system_status SET progress = %s, last_update = %s WHERE id = 1", (value, get_now()))
-            elif key == "total":
-                c_upd.execute("UPDATE system_status SET total = %s, last_update = %s WHERE id = 1", (value, get_now()))
-            elif key == "mode":
-                c_upd.execute("UPDATE system_status SET mode = %s, last_update = %s WHERE id = 1", (value, get_now()))
-            conn_upd.commit()
-            pool_upd.putconn(conn_upd)
-        except:
-            pass # Ignorujeme chyby v headless režimu
+# V app.py to musí být takto:
+def monitor_job(status_hook=None):  # Přidejte tento parametr do závorky!
+    """
+    Hlavní kontrolní logika pro automatickou prověrku spisů.
+    """
+    def broadcast(is_running, progress=0, total=0, mode="Inicializace..."):
+        if status_hook:
+            status_hook(is_running, progress, total, mode)
+        else:
+            # Nouzový přímý zápis do DB, pokud by funkce nebyla předána
+            try:
+                conn_b, pool_b = get_db_connection()
+                with conn_b.cursor() as cb:
+                    cb.execute("""
+                        UPDATE system_status 
+                        SET is_running=%s, progress=%s, total=%s, mode=%s, last_update=%s 
+                        WHERE id=1
+                    """, (is_running, progress, total, mode, get_now()))
+                    conn_b.commit()
+                pool_b.putconn(conn_b)
+            except Exception as e:
+                print(f"Brodcast error: {e}")
 
-    # 2. Kontrola, zda už kontrola neběží
-    if hasattr(st, "monitor_status") and st.monitor_status.get("running"):
-        return
-
-    # START KONTROLY
+    # --- 1. START ---
     start_ts = get_now()
-    update_status_all("running", True)
-    update_status_all("progress", 0)
-    update_status_all("mode", "Inicializace...")
+    broadcast(True, 0, 0, "Startuji proces...")
+
+    conn = None
+    db_pool = None
     
-    conn = None; db_pool = None
     try:
+        # Načteme všechny případy z DB
         conn, db_pool = get_db_connection()
         c = conn.cursor()
         c.execute("SELECT id, params_json, pocet_udalosti, oznaceni, posledni_udalost FROM pripady")
         all_rows = c.fetchall()
-        db_pool.putconn(conn); conn = None # Uvolníme spojení pro thready
         
-        # Rozdělení na aktivní a archivní (noční) režim
+        # Uvolníme spojení z poolu před spuštěním threadů (aby měly thready volno)
+        db_pool.putconn(conn)
+        conn = None 
+
+        # --- 2. FILTRACE REŽIMU (DEN/NOC) ---
         aktualni_hodina = get_now().hour
-        aktivni_pripady = [r for r in all_rows if not je_pripad_skonceny(r[4])]
-        skoncene_pripady = [r for r in all_rows if je_pripad_skonceny(r[4])]
+        if aktualni_hodina == 2:  # Ve 2:00 ráno kontrolujeme archiv (skončené věci)
+            target_rows = [r for r in all_rows if je_pripad_skonceny(r[4])]
+            rezim_text = "🌙 Noční kontrola archivu"
+        else:                     # Zbytek dne kontrolujeme jen aktivní kauzy
+            target_rows = [r for r in all_rows if not je_pripad_skonceny(r[4])]
+            rezim_text = "☀️ Denní kontrola aktivních"
+
+        total_count = len(target_rows)
+        broadcast(True, 0, total_count, rezim_text)
         
-        if aktualni_hodina == 2: 
-            target_rows = skoncene_pripady
-            rezim_text = "🌙 NOČNÍ KONTROLA (ARCHIV)"
-        else:
-            target_rows = aktivni_pripady
-            rezim_text = "☀️ DENNÍ KONTROLA (AKTIVNÍ)"
-            
-        update_status_all("total", len(target_rows))
-        update_status_all("mode", rezim_text)
-        print(f"--- START {rezim_text} ({len(target_rows)} spisů) ---")
-        
-        dokonceno = 0
+        print(f"--- {rezim_text}: Spuštěno pro {total_count} spisů ---")
+
+        # --- 3. PARALELNÍ ZPRACOVÁNÍ ---
+        processed_now = 0
         if target_rows:
-            # Paralelní zpracování 3 vlákny pro stabilitu na Heroku
+            # max_workers=3 je ideální pro Heroku Free/Basic (šetří RAM i CPU)
             with ThreadPoolExecutor(max_workers=3) as executor:
                 futures = [executor.submit(zkontroluj_jeden_pripad, row) for row in target_rows]
+                
                 for future in as_completed(futures):
-                    dokonceno += 1
-                    update_status_all("progress", dokonceno)
+                    processed_now += 1
+                    # Každý dokončený thread nahlásí progres do DB
+                    broadcast(True, processed_now, total_count, rezim_text)
                     
-                    # Logování do konzole Heroku (pro kontrolu "živě")
-                    if dokonceno % 10 == 0 or dokonceno == len(target_rows):
-                        print(f"⏳ Průběh: {dokonceno} / {len(target_rows)} zpracováno...")
-            
-        # Zápis výsledku do systémové historie logů
-        end_ts = get_now()
-        conn, db_pool = get_db_connection()
-        c = conn.cursor()
-        c.execute("INSERT INTO system_logs (start_time, end_time, mode, processed_count) VALUES (%s, %s, %s, %s)",
-                  (start_ts, end_ts, rezim_text, dokonceno))
-        conn.commit()
-        print(f"--- KONEC KONTROLY ({dokonceno} zpracováno) ---")
+                    # Log do konzole pro Heroku logs
+                    if processed_now % 5 == 0 or processed_now == total_count:
+                        print(f"Progress: {processed_now}/{total_count}")
 
-        # NOVÉ: Spustíme úklid hned po kontrole
+        # --- 4. FINÁLNÍ LOGOVÁNÍ A ÚKLID ---
+        # Záznam o úspěšné kontrole do historie logů
+        conn, db_pool = get_db_connection()
+        with conn.cursor() as c:
+            c.execute("""
+                INSERT INTO system_logs (start_time, end_time, mode, processed_count) 
+                VALUES (%s, %s, %s, %s)
+            """, (start_ts, get_now(), rezim_text, processed_now))
+            conn.commit()
+        
+        # Automatický úklid starých záznamů (historie > 30 dní)
         vycistit_stare_logy(dny=30)
-                    
+
     except Exception as e:
-        print(f"❌ Chyba scheduleru: {e}")
+        error_msg = f"CHYBA: {str(e)[:50]}"
+        print(f"Kritická chyba v monitor_job: {e}")
+        broadcast(False, 0, 0, error_msg)
     finally:
-        # Resetování stavu do "spánku"
-        update_status_all("running", False)
-        update_status_all("mode", "Spí")
-        if conn and db_pool: db_pool.putconn(conn)
+        # Vždy přepneme stav do "Spí", i když to spadlo
+        broadcast(False, 0, 0, "Spí (Dokončeno)")
+        if conn and db_pool:
+            db_pool.putconn(conn)
 
 # start_scheduler()
 
@@ -761,26 +764,34 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # --- AUTOMATICKY SE AKTUALIZUJÍCÍ PANEL ---
-@st.fragment(run_every=5) # Každých 5s se podíváme do DB
-def render_status():
-    st.markdown("### 🤖 Automatická kontrola")
-    
-    # NOVÉ: Načtení stavu z DB
-    conn, db_pool = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT is_running, progress, total, mode FROM system_status WHERE id = 1")
-    db_state = c.fetchone()
-    db_pool.putconn(conn)
-    
-    if db_state and db_state[0]: # Pokud is_running == True
-        is_run, prog, tot, mode = db_state
-        st.info(f"{mode}")
-        st.progress(int((prog / tot) * 100) if tot > 0 else 0)
-        st.caption(f"Zpracováno: **{prog} / {tot}**")
-    else:
-        st.caption("Systém je v pohotovosti (další start ve :40)")
-    
+    @st.fragment(run_every=5)
+    def render_status():
+        st.markdown("### 🤖 Stav systému")
+        try:
+            conn, db_pool = get_db_connection()
+            with conn.cursor() as c:
+                c.execute("SELECT is_running, progress, total, mode, last_update FROM system_status WHERE id = 1")
+                res = c.fetchone()
+            db_pool.putconn(conn)
+
+            if res:
+                is_run, prog, tot, mode, last_upd = res
+                
+                # Kontrola "Deadman switch" - pokud je last_update starší než 10 min, něco je špatně
+                is_stale = (get_now() - last_upd).total_seconds() > 600 if last_upd else False
+
+                if is_run and not is_stale:
+                    st.info(f"**Režim:** {mode}")
+                    p_val = min(1.0, prog / tot) if tot > 0 else 0.0
+                    st.progress(p_val)
+                    st.caption(f"Zpracováno {prog} z {tot} (Aktualizováno: {last_upd.strftime('%H:%M:%S')})")
+                else:
+                    st.success("✅ Systém je v pohotovosti (spí)")
+                    st.caption(f"Naposledy aktivní: {last_upd.strftime('%d.%m. %H:%M') if last_upd else 'Nikdy'}")
+        except Exception as e:
+            st.error(f"Chyba čtení stavu: {e}")
+
+    # V bočním panelu pak jen zavoláte:
     render_status()
             
     st.markdown("---")
