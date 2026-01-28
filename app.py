@@ -395,11 +395,14 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
     prijemci = list(set(prijemci)) 
     if not prijemci: return
 
-    msg = MIMEMultipart("alternative") # Změna na alternative pro HTML
+    # Získání aktuálního českého času pro patičku
+    cas_odeslani = get_now().strftime("%d.%m.%Y %H:%M")
+
+    msg = MIMEMultipart("alternative")
     msg['From'] = SMTP_EMAIL
     msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
 
-    # 1. Čistý text (pro staré klienty)
+    # 1. Čistý text
     text_body = f"""
     Změna u případu: {nazev}
     Soud: {soud}
@@ -412,26 +415,31 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
     {url}
     
     --
-    Infosoud Monitor
+    Infosoud Monitor (Odesláno: {cas_odeslani})
     """
 
-    # 2. HTML verze (pro moderní klienty s prolinkem)
+    # 2. HTML verze s barvičkami a časem
     html_body = f"""
     <html>
       <body>
-        <h3>🚨 Změna u případu: {nazev}</h3>
+        <h3 style="color: #d32f2f;">🚨 Změna u případu: {nazev}</h3>
         <p>
            <b>Soud:</b> {soud}<br>
            <b>Spisová značka:</b> {znacka}
         </p>
-        <hr>
-        <p><b>Nová událost:</b><br>{udalost}</p>
+        <div style="background-color: #f5f5f5; padding: 15px; border-left: 5px solid #d32f2f; margin: 15px 0;">
+            <b>Nová událost:</b><br>
+            {udalost}
+        </div>
         <br>
-        <a href="{url}" style="background-color: #d32f2f; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px;">
+        <a href="{url}" style="background-color: #d32f2f; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; font-weight: bold;">
            👉 Otevřít na Infosoudu
         </a>
         <br><br>
-        <small style="color: grey;">Infosoud Monitor</small>
+        <hr style="border: 0; border-top: 1px solid #eee;">
+        <small style="color: grey;">
+            Infosoud Monitor • Odesláno: {cas_odeslani}
+        </small>
       </body>
     </html>
     """
