@@ -666,7 +666,7 @@ def monitor_job():
         update_status_all("mode", "Spí")
         if conn and db_pool: db_pool.putconn(conn)
 
-start_scheduler()
+# start_scheduler()
 
 # -------------------------------------------------------------------------
 # 4. FRONTEND A PŘIHLÁŠENÍ (ANTI-FLICKER)
