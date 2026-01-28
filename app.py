@@ -702,34 +702,24 @@ with st.sidebar:
     st.markdown("---")
     
     # --- AUTOMATICKY SE AKTUALIZUJÍCÍ PANEL ---
-    @st.fragment(run_every=2)
-    def render_status():
-        st.markdown("### 🤖 Automatická kontrola")
-        if st.monitor_status["running"]:
-            total = st.monitor_status["total"]
-            done = st.monitor_status["progress"]
-            mode = st.monitor_status.get("mode", "Běží...")
-            
-            remaining = total - done
-            eta_seconds = remaining * 0.8 
-            eta_min = int(eta_seconds // 60)
-            
-            st.info(f"{mode}")
-            st.progress(int((done / total) * 100) if total > 0 else 0)
-            st.caption(f"Zpracováno: **{done} / {total}**")
-            st.caption(f"Zbývá cca: **{eta_min} min**")
-        else:
-            last_time = st.monitor_status["last_finished"]
-            if last_time:
-                if isinstance(last_time, str):
-                    try: last_time = datetime.datetime.fromisoformat(last_time)
-                    except: pass
-                if isinstance(last_time, datetime.datetime):
-                    st.caption(f"Poslední kontrola: {last_time.strftime('%H:%M')}")
-                else:
-                    st.caption("Poslední kontrola: (neznámý čas)")
-            else:
-                st.caption("Čekám na spuštění...")
+@st.fragment(run_every=5) # Každých 5s se podíváme do DB
+def render_status():
+    st.markdown("### 🤖 Automatická kontrola")
+    
+    # NOVÉ: Načtení stavu z DB
+    conn, db_pool = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT is_running, progress, total, mode FROM system_status WHERE id = 1")
+    db_state = c.fetchone()
+    db_pool.putconn(conn)
+    
+    if db_state and db_state[0]: # Pokud is_running == True
+        is_run, prog, tot, mode = db_state
+        st.info(f"{mode}")
+        st.progress(int((prog / tot) * 100) if tot > 0 else 0)
+        st.caption(f"Zpracováno: **{prog} / {tot}**")
+    else:
+        st.caption("Systém je v pohotovosti (další start ve :40)")
     
     render_status()
             
