@@ -25,14 +25,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
 except:
-    pass # Ignorujeme, pokud běžíme jako worker v headless režimu
+    pass # Ignorujeme, pokud běžíme jako worker bez prohlížeče
 
 # --- 🕰️ NASTAVENÍ ČASOVÉHO PÁSMA (CZECHIA) ---
 def get_now():
     tz = pytz.timezone('Europe/Prague')
     return datetime.datetime.now(tz)
 
-# --- 🔄 GLOBÁLNÍ STAV SCHEDULERU (PRO RUČNÍ START V SEŠNĚ) ---
+# --- 🔄 GLOBÁLNÍ STAV SCHEDULERU ---
 if not hasattr(st, "monitor_status"):
     st.monitor_status = {
         "running": False,
@@ -182,6 +182,7 @@ def init_db():
                       akce TEXT,
                       popis TEXT)''')
         
+        # --- NOVÁ TABULKA PRO LOGY KONTROL ---
         c.execute('''CREATE TABLE IF NOT EXISTS system_logs
                      (id SERIAL PRIMARY KEY,
                       start_time TIMESTAMP,
@@ -189,7 +190,7 @@ def init_db():
                       mode TEXT,
                       processed_count INTEGER)''')
         
-        # --- TABULKA PRO STAV SYSTÉMU (MOST MEZI WORKEREM A UI) ---
+# --- TABULKA PRO STAV SYSTÉMU ---
         c.execute('''CREATE TABLE IF NOT EXISTS system_status
                      (id INTEGER PRIMARY KEY,
                       is_running BOOLEAN,
@@ -198,13 +199,10 @@ def init_db():
                       mode TEXT,
                       last_update TIMESTAMP)''')
         
+        # TENTO ŘÁDEK MUSÍ BÝT ODSZENÝ STEJNĚ JAKO C.EXECUTE VÝŠE!
         c.execute("INSERT INTO system_status (id, is_running, progress, total, mode) SELECT 1, False, 0, 0, 'Spí' WHERE NOT EXISTS (SELECT 1 FROM system_status WHERE id = 1)")
                      
         conn.commit()
-    except Exception as e:
-        st.error(f"Chyba při inicializaci DB: {e}")
-    finally:
-        if conn and db_pool: db_pool.putconn(conn)
 
 init_db()
 
@@ -224,6 +222,7 @@ def create_user(username, password, email, role):
         if conn: conn.rollback()
         return False
     except Exception as e:
+        print(f"Chyba DB: {e}")
         if conn: conn.rollback()
         return False
     finally:
@@ -290,7 +289,7 @@ def get_user_role(username):
         if conn and db_pool: db_pool.putconn(conn)
     return role
 
-# --- LOGOVÁNÍ A ÚDRŽBA ---
+# --- LOGOVÁNÍ ---
 
 def log_do_historie(akce, popis):
     if 'current_user' in st.session_state:
@@ -343,10 +342,14 @@ def vycistit_stare_logy(dny=30):
         limit = get_now() - datetime.timedelta(days=dny)
         conn, db_pool = get_db_connection()
         c = conn.cursor()
+        
+        # Smazání starých logů kontrol
         c.execute("DELETE FROM system_logs WHERE start_time < %s", (limit,))
+        # Smazání staré historie akcí uživatelů
         c.execute("DELETE FROM historie WHERE datum < %s", (limit,))
+        
         conn.commit()
-        print(f"Sweep 🧹: Smazány záznamy starší než {dny} dní.")
+        print(f"🧹 Úklid: Smazány záznamy starší než {dny} dní.")
     except Exception as e:
         print(f"Chyba při úklidu DB: {e}")
     finally:
@@ -357,7 +360,7 @@ def vycistit_stare_logy(dny=30):
 # -------------------------------------------------------------------------
 
 def odeslat_email_notifikaci(nazev, udalost, znacka):
-    if not SMTP_EMAIL or "novy.email" in SMTP_EMAIL: return
+    if "novy.email" in SMTP_EMAIL: return
 
     conn = None; db_pool = None; prijemci = []
     try:
@@ -404,7 +407,13 @@ def parsuj_url(url):
                 "cislo": p.get('bcVec',[p.get('cislo',[None])[0]])[0], "rocnik": p.get('rocnik',[None])[0]}
     except: return None
 
-USER_AGENTS = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"]
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0"
+]
 
 def stahni_data_z_infosoudu(params):
     url = "https://infosoud.justice.cz/InfoSoud/public/search.do"
@@ -414,19 +423,38 @@ def stahni_data_z_infosoudu(params):
         'bcVec': params['cislo'], 'rocnik': params['rocnik'], 'spamQuestion': '23', 'agendaNc': 'CIVIL'
     }
     
+    agent = random.choice(USER_AGENTS)
+    headers = {
+        "User-Agent": agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "cs,en-US;q=0.7,en;q=0.3",
+        "Referer": "https://infosoud.justice.cz/InfoSoud/public/search.do",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    }
+    
     try:
-        r = requests.get(url, params=req_params, headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=10)
-        if "recaptcha" in r.text.lower(): return None
+        r = requests.get(url, params=req_params, headers=headers, timeout=10)
+        if "recaptcha" in r.text.lower() or "spam" in r.text.lower():
+            print("⚠️ POZOR: Infosoud vrátil podezření na robota (Captcha).")
+            return None
+
         soup = BeautifulSoup(r.text, 'html.parser')
         
+        if "Řízení nebylo nalezeno" in soup.text: 
+            return None
+            
         udalosti = []
         for row in soup.find_all('tr'):
             cols = row.find_all('td')
             if len(cols) >= 2 and re.match(r'^\d{2}\.\d{2}\.\d{4}$', cols[1].get_text(strip=True)):
-                text = cols[0].get_text(strip=True)
-                udalosti.append(f"{cols[1].get_text(strip=True)} - {text}")
+                text = cols[0].find('a').get_text(strip=True) if cols[0].find('a') else cols[0].get_text(strip=True)
+                datum = cols[1].get_text(strip=True)
+                udalosti.append(f"{datum} - {text}")
         return udalosti
-    except:
+        
+    except Exception as e:
+        print(f"Chyba při stahování: {e}")
         return None
 
 def pridej_pripad(url, oznaceni):
@@ -435,169 +463,226 @@ def pridej_pripad(url, oznaceni):
     data = stahni_data_z_infosoudu(p)
     if data is None: return False, "Spis nenalezen."
     
+    spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
+    
     conn = None; db_pool = None
     try:
-        conn, db_pool = get_db_connection(); c = conn.cursor()
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
         c.execute("INSERT INTO pripady (oznaceni, url, params_json, pocet_udalosti, posledni_udalost, ma_zmenu, posledni_kontrola) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                   (oznaceni, url, json.dumps(p), len(data), data[-1] if data else "", False, get_now()))
         conn.commit()
+        log_do_historie("Přidání spisu", f"Přidán spis: {oznaceni} ({spis_zn})")
         return True, "OK"
-    except:
+    except Exception as e:
         if conn: conn.rollback()
-        return False, "Chyba DB"
+        return False, f"Chyba DB: {e}"
     finally:
         if conn and db_pool: db_pool.putconn(conn)
 
 def smaz_pripad(cid):
     conn = None; db_pool = None
     try:
-        conn, db_pool = get_db_connection(); c = conn.cursor()
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT oznaceni FROM pripady WHERE id=%s", (cid,))
+        res = c.fetchone()
+        nazev = res[0] if res else "Neznámý"
         c.execute("DELETE FROM pripady WHERE id=%s", (cid,))
         conn.commit()
+        log_do_historie("Smazání spisu", f"Uživatel smazal spis: {nazev}")
+    except Exception as e:
+        print(f"Chyba při mazání: {e}")
     finally:
         if conn and db_pool: db_pool.putconn(conn)
 
 def resetuj_upozorneni(cid):
     conn = None; db_pool = None
     try:
-        conn, db_pool = get_db_connection(); c = conn.cursor()
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT oznaceni FROM pripady WHERE id=%s", (cid,))
+        res = c.fetchone()
+        nazev = res[0] if res else "Neznámý"
         c.execute("UPDATE pripady SET ma_zmenu = %s WHERE id=%s", (False, cid))
         conn.commit()
+        log_do_historie("Potvrzení změny", f"Viděl jsem: {nazev}")
+    except Exception as e:
+        print(f"Chyba: {e}")
     finally:
         if conn and db_pool: db_pool.putconn(conn)
 
 def resetuj_vsechna_upozorneni():
     conn = None; db_pool = None
     try:
-        conn, db_pool = get_db_connection(); c = conn.cursor()
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
         c.execute("UPDATE pripady SET ma_zmenu = %s WHERE ma_zmenu = %s", (False, True))
         conn.commit()
+        log_do_historie("Hromadné potvrzení", "Uživatel označil všechny změny jako viděné.")
+    except Exception as e:
+        print(f"Chyba: {e}")
     finally:
         if conn and db_pool: db_pool.putconn(conn)
 
 def prejmenuj_pripad(cid, novy_nazev):
     conn = None; db_pool = None
     try:
-        conn, db_pool = get_db_connection(); c = conn.cursor()
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
         c.execute("UPDATE pripady SET oznaceni = %s WHERE id = %s", (novy_nazev, cid))
         conn.commit()
+        log_do_historie("Přejmenování", f"Spis ID {cid} přejmenován na '{novy_nazev}'")
+    except Exception as e:
+        print(f"Chyba: {e}")
     finally:
         if conn and db_pool: db_pool.putconn(conn)
 
-# --- SCHEDULER POMOCNÍCI ---
+# --- SCHEDULER (POZADÍ - CHYTRÝ REŽIM DEN/NOC) ---
+@st.cache_resource
+def start_scheduler():
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(monitor_job, 'cron', minute=40)
+    scheduler.start()
+    return scheduler
 
 def zkontroluj_jeden_pripad(row):
     cid, params_str, old_cnt, name, _ = row
+    
     conn = None; db_pool = None
     try:
         p = json.loads(params_str)
         time.sleep(random.uniform(1.0, 3.0))
         new_data = stahni_data_z_infosoudu(p)
+        
         if new_data is not None:
             now = get_now()
-            conn, db_pool = get_db_connection(); c = conn.cursor()
+            conn, db_pool = get_db_connection()
+            c = conn.cursor()
+            
             if len(new_data) > old_cnt:
                 c.execute("UPDATE pripady SET pocet_udalosti=%s, posledni_udalost=%s, ma_zmenu=%s, posledni_kontrola=%s WHERE id=%s", 
                           (len(new_data), new_data[-1], True, now, cid))
                 conn.commit()
+                try:
+                    c.execute("INSERT INTO historie (datum, uzivatel, akce, popis) VALUES (%s, %s, %s, %s)",
+                              (now, "🤖 Systém (Robot)", "Nová událost", f"Změna u {name}"))
+                    conn.commit()
+                except: pass
+                
                 spis_zn = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
                 odeslat_email_notifikaci(name, new_data[-1], spis_zn)
             else:
                 c.execute("UPDATE pripady SET posledni_kontrola=%s WHERE id=%s", (now, cid))
                 conn.commit()
             return True
-    except: pass
+            
+    except Exception as e:
+        print(f"Chyba u případu ID {cid}: {e}")
+        return False
     finally:
         if conn and db_pool: db_pool.putconn(conn)
-    return False
 
 def je_pripad_skonceny(text_udalosti):
     if not text_udalosti: return False
     txt = text_udalosti.lower()
-    return any(x in txt for x in ["skončení", "pravomoc", "vyřízeno"])
-
-# --- 4. MONITOR JOB (HLAVNÍ MOTOR S MOSTY) ---
+    return "skončení věci" in txt or "pravomoc" in txt or "vyřízeno" in txt
 
 def monitor_job():
-    def update_status_all(key, value):
+    # --- TATO ČÁST JE KLÍČOVÁ PRO PROPOJENÍ S UI ---
+    def update_status(key, value):
+        # 1. Zápis do paměti (pro ruční spuštění z webu)
         if hasattr(st, "monitor_status"):
             st.monitor_status[key] = value
+        
+        # 2. Zápis do SQL (aby to viděl uživatel, když běží worker na pozadí)
         try:
             conn_upd, pool_upd = get_db_connection()
             c_upd = conn_upd.cursor()
-            if key == "running": c_upd.execute("UPDATE system_status SET is_running = %s, last_update = %s WHERE id = 1", (value, get_now()))
-            elif key == "progress": c_upd.execute("UPDATE system_status SET progress = %s, last_update = %s WHERE id = 1", (value, get_now()))
-            elif key == "total": c_upd.execute("UPDATE system_status SET total = %s, last_update = %s WHERE id = 1", (value, get_now()))
-            elif key == "mode": c_upd.execute("UPDATE system_status SET mode = %s, last_update = %s WHERE id = 1", (value, get_now()))
-            conn_upd.commit(); pool_upd.putconn(conn_upd)
-        except: pass
+            if key == "running":
+                c_upd.execute("UPDATE system_status SET is_running = %s, last_update = %s WHERE id = 1", (value, get_now()))
+            elif key == "progress":
+                c_upd.execute("UPDATE system_status SET progress = %s, last_update = %s WHERE id = 1", (value, get_now()))
+            elif key == "total":
+                c_upd.execute("UPDATE system_status SET total = %s, last_update = %s WHERE id = 1", (value, get_now()))
+            elif key == "mode":
+                c_upd.execute("UPDATE system_status SET mode = %s, last_update = %s WHERE id = 1", (value, get_now()))
+            conn_upd.commit()
+            pool_upd.putconn(conn_upd)
+        except:
+            pass # Ignorujeme chyby v headless režimu
 
-    if hasattr(st, "monitor_status") and st.monitor_status.get("running"): return
+    # 2. Kontrola, zda už kontrola neběží
+    if hasattr(st, "monitor_status") and st.monitor_status.get("running"):
+        return
 
+    # START KONTROLY
     start_ts = get_now()
-    update_status_all("running", True); update_status_all("progress", 0); update_status_all("mode", "Inicializace...")
+    update_status_all("running", True)
+    update_status_all("progress", 0)
+    update_status_all("mode", "Inicializace...")
     
     conn = None; db_pool = None
     try:
-        conn, db_pool = get_db_connection(); c = conn.cursor()
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
         c.execute("SELECT id, params_json, pocet_udalosti, oznaceni, posledni_udalost FROM pripady")
-        all_rows = c.fetchall(); db_pool.putconn(conn); conn = None 
+        all_rows = c.fetchall()
+        db_pool.putconn(conn); conn = None # Uvolníme spojení pro thready
         
+        # Rozdělení na aktivní a archivní (noční) režim
         aktualni_hodina = get_now().hour
         aktivni_pripady = [r for r in all_rows if not je_pripad_skonceny(r[4])]
         skoncene_pripady = [r for r in all_rows if je_pripad_skonceny(r[4])]
         
         if aktualni_hodina == 2: 
-            target_rows = skoncene_pripady; rezim_text = "🌙 NOČNÍ KONTROLA (ARCHIV)"
+            target_rows = skoncene_pripady
+            rezim_text = "🌙 NOČNÍ KONTROLA (ARCHIV)"
         else:
-            target_rows = aktivni_pripady; rezim_text = "☀️ DENNÍ KONTROLA (AKTIVNÍ)"
+            target_rows = aktivni_pripady
+            rezim_text = "☀️ DENNÍ KONTROLA (AKTIVNÍ)"
             
-        update_status_all("total", len(target_rows)); update_status_all("mode", rezim_text)
+        update_status_all("total", len(target_rows))
+        update_status_all("mode", rezim_text)
         print(f"--- START {rezim_text} ({len(target_rows)} spisů) ---")
         
         dokonceno = 0
         if target_rows:
+            # Paralelní zpracování 3 vlákny pro stabilitu na Heroku
             with ThreadPoolExecutor(max_workers=3) as executor:
                 futures = [executor.submit(zkontroluj_jeden_pripad, row) for row in target_rows]
                 for future in as_completed(futures):
                     dokonceno += 1
                     update_status_all("progress", dokonceno)
-                    if dokonceno % 10 == 0: print(f"⏳ Průběh: {dokonceno}/{len(target_rows)}")
+                    
+                    # Logování do konzole Heroku (pro kontrolu "živě")
+                    if dokonceno % 10 == 0 or dokonceno == len(target_rows):
+                        print(f"⏳ Průběh: {dokonceno} / {len(target_rows)} zpracováno...")
             
+        # Zápis výsledku do systémové historie logů
         end_ts = get_now()
-        conn, db_pool = get_db_connection(); c = conn.cursor()
-        c.execute("INSERT INTO system_logs (start_time, end_time, mode, processed_count) VALUES (%s, %s, %s, %s)", (start_ts, end_ts, rezim_text, dokonceno))
-        conn.commit(); print("--- KONEC ---")
-        vycistit_stare_logy(30)
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
+        c.execute("INSERT INTO system_logs (start_time, end_time, mode, processed_count) VALUES (%s, %s, %s, %s)",
+                  (start_ts, end_ts, rezim_text, dokonceno))
+        conn.commit()
+        print(f"--- KONEC KONTROLY ({dokonceno} zpracováno) ---")
+
+        # NOVÉ: Spustíme úklid hned po kontrole
+        vycistit_stare_logy(dny=30)
                     
     except Exception as e:
-        print(f"❌ Chyba: {e}")
+        print(f"❌ Chyba scheduleru: {e}")
     finally:
-        update_status_all("running", False); update_status_all("mode", "Spí")
+        # Resetování stavu do "spánku"
+        update_status_all("running", False)
+        update_status_all("mode", "Spí")
         if conn and db_pool: db_pool.putconn(conn)
 
-# --- 5. UI FRAGMENT (POLOVÁNÍ DATABÁZE) ---
-
-@st.fragment(run_every=5)
-def render_status():
-    st.markdown("### 🤖 Automatická kontrola")
-    try:
-        conn, db_pool = get_db_connection(); c = conn.cursor()
-        c.execute("SELECT is_running, progress, total, mode FROM system_status WHERE id = 1")
-        db_state = c.fetchone(); db_pool.putconn(conn)
-        
-        if db_state and db_state[0]:
-            is_run, prog, tot, mode = db_state
-            st.info(f"{mode}")
-            st.progress(int((prog / tot) * 100) if tot > 0 else 0)
-            st.caption(f"Zpracováno: **{prog} / {tot}**")
-        else:
-            st.caption("✅ Systém je v pohotovosti (start ve :40)")
-    except:
-        st.caption("⏳ Načítám stav...")
+# start_scheduler()
 
 # -------------------------------------------------------------------------
-# 6. FRONTEND A PŘIHLÁŠENÍ
+# 4. FRONTEND A PŘIHLÁŠENÍ (ANTI-FLICKER)
 # -------------------------------------------------------------------------
 
 if 'logged_in' not in st.session_state:
@@ -612,8 +697,14 @@ if not st.session_state['logged_in']:
             if cookie_user:
                 role = get_user_role(cookie_user)
                 if role:
-                    st.session_state['logged_in'], st.session_state['current_user'], st.session_state['user_role'] = True, cookie_user, role
+                    st.session_state['logged_in'] = True
+                    st.session_state['current_user'] = cookie_user
+                    st.session_state['user_role'] = role
                     st.rerun()
+            else:
+                 time.sleep(0.2)
+                 cookie_user = cookie_manager.get(cookie="infosoud_user")
+                 if cookie_user: st.rerun()
         except: pass
 
 if not st.session_state['logged_in']:
@@ -623,13 +714,20 @@ if not st.session_state['logged_in']:
         with st.form("login_form"):
             username = st.text_input("Uživatelské jméno")
             password = st.text_input("Heslo", type="password")
-            if st.form_submit_button("Přihlásit se"):
+            submitted = st.form_submit_button("Přihlásit se")
+            
+            if submitted:
                 role = verify_login(username, password)
                 if role:
-                    st.session_state['logged_in'], st.session_state['current_user'], st.session_state['user_role'] = True, username, role
+                    st.session_state['logged_in'] = True
+                    st.session_state['current_user'] = username
+                    st.session_state['user_role'] = role
                     cookie_manager.set("infosoud_user", username, expires_at=datetime.datetime.now() + datetime.timedelta(days=7))
-                    st.rerun()
-                else: st.error("Chybné jméno nebo heslo.")
+                    if 'prevent_relogin' in st.session_state: del st.session_state['prevent_relogin']
+                    st.success(f"Vítejte, {username} ({role})")
+                    time.sleep(1); st.rerun()
+                else:
+                    st.error("Chybné jméno nebo heslo.")
     st.stop()
 
 # --- HLAVNÍ APLIKACE ---
@@ -637,33 +735,158 @@ if not st.session_state['logged_in']:
 st.title("⚖️ Monitor Soudních Spisů")
 
 with st.sidebar:
-    st.write(f"👤 **{st.session_state['current_user']}** ({st.session_state['user_role']})")
+    st.write(f"👤 **{st.session_state['current_user']}**")
+    st.caption(f"Role: {st.session_state['user_role']}")
+    
     if st.button("Odhlásit se"):
         cookie_manager.delete("infosoud_user")
-        st.session_state['logged_in'] = False; st.rerun()
+        st.session_state['logged_in'] = False
+        st.session_state['prevent_relogin'] = True
+        time.sleep(0.5); st.rerun()
+        
     st.markdown("---")
-    render_status() # Voláme globálně definovaný fragment
+    
+    # --- AUTOMATICKY SE AKTUALIZUJÍCÍ PANEL ---
+@st.fragment(run_every=5) # Každých 5s se podíváme do DB
+def render_status():
+    st.markdown("### 🤖 Automatická kontrola")
+    
+    # NOVÉ: Načtení stavu z DB
+    conn, db_pool = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT is_running, progress, total, mode FROM system_status WHERE id = 1")
+    db_state = c.fetchone()
+    db_pool.putconn(conn)
+    
+    if db_state and db_state[0]: # Pokud is_running == True
+        is_run, prog, tot, mode = db_state
+        st.info(f"{mode}")
+        st.progress(int((prog / tot) * 100) if tot > 0 else 0)
+        st.caption(f"Zpracováno: **{prog} / {tot}**")
+    else:
+        st.caption("Systém je v pohotovosti (další start ve :40)")
+    
+    render_status()
+            
     st.markdown("---")
+
+    # --- PŘIDÁNÍ SPISU ---
     st.header("➕ Přidat nový spis")
-    nazev_val = st.text_input("Název kauzy", key="input_nazev")
-    url_val = st.text_input("URL z Infosoudu", key="input_url")
+    
+    if st.session_state.get('smazat_vstupy'):
+        st.session_state.input_url = ""
+        st.session_state.input_nazev = ""
+        st.session_state.smazat_vstupy = False 
+    
+    st.text_input("Název kauzy", key="input_nazev")
+    st.text_input("URL z Infosoudu", key="input_url")
+    
     if st.button("Sledovat", use_container_width=True):
-        ok, msg = pridej_pripad(url_val, nazev_val)
-        if ok: st.success("Přidáno!"); time.sleep(1); st.rerun()
-        else: st.error(msg)
+        with st.spinner("⏳ Přidávám případ..."):
+            zacatek = time.time()
+            url_val = st.session_state.input_url
+            nazev_val = st.session_state.input_nazev
+            ok, msg = pridej_pripad(url_val, nazev_val)
+            trvani = time.time() - zacatek
+            if trvani < 5: time.sleep(5 - trvani)
+            
+            if ok:
+                st.cache_data.clear()
+                st.session_state['vysledek_akce'] = ("success", msg)
+                st.session_state['smazat_vstupy'] = True
+            else:
+                st.session_state['vysledek_akce'] = ("error", msg)
+        if ok: st.rerun()
+
+    if 'vysledek_akce' in st.session_state:
+        typ, text = st.session_state['vysledek_akce']
+        if typ == 'success': st.success(text)
+        else: st.error(text)
+        del st.session_state['vysledek_akce']
+        
+    st.divider()
 
 menu_options = ["📊 Přehled kauz", "📜 Auditní historie", "🤖 Logy kontrol"]
-if st.session_state['user_role'] in ["Super Admin", "Administrátor"]: menu_options.append("👥 Správa uživatelů")
+if st.session_state['user_role'] in ["Super Admin", "Administrátor"]:
+    menu_options.append("👥 Správa uživatelů")
+
 selected_page = st.sidebar.radio("Menu", menu_options)
+st.sidebar.markdown("---")
 
-# -------------------------------------------------------------------------
-# STRÁNKY (ZKRÁCENÉ LOGY/AUDIT PRO PŘEHLEDNOST)
-# -------------------------------------------------------------------------
+# 👇👇👇 SEM VLOŽ TENTO NOVÝ BLOK KÓDU 👇👇👇
 
+with st.sidebar.expander("🛠️ Diagnostika (Admin)", expanded=False):
+    st.write("Test funkčnosti e-mailů.")
     
-    ITEMS_PER_PAGE = 50
+    if st.button("📧 Odeslat testovací e-mail", use_container_width=True):
+        # Ověření, zda je nadefinován e-mail
+        if not SMTP_EMAIL or not SMTP_PASSWORD:
+             st.error("Nemáš nastavené proměnné SMTP_EMAIL nebo SMTP_PASSWORD!")
+        else:
+            with st.spinner("Odesílám testovací zprávu..."):
+                try:
+                    # Simulujeme notifikaci
+                    odeslat_email_notifikaci(
+                        nazev="TESTOVACÍ SIMULACE", 
+                        udalost=f"Toto je test z Heroku. Čas: {datetime.datetime.now().strftime('%H:%M:%S')}", 
+                        znacka="Test 123/2024"
+                    )
+                    st.success("Odesláno! Zkontroluj si e-mail (i spam).")
+                except Exception as e:
+                    st.error(f"Chyba: {e}")
+
+# 👆👆👆 KONEC NOVÉHO BLOKU 👆👆👆
+
+# -------------------------------------------------------------------------
+# STRÁNKA: SPRÁVA UŽIVATELŮ
+# -------------------------------------------------------------------------
+if selected_page == "👥 Správa uživatelů":
+    st.header("👥 Správa uživatelů")
+    current_role = st.session_state['user_role']
+    
+    with st.expander("➕ Vytvořit nového uživatele", expanded=True):
+        c1, c2, c3, c4 = st.columns([2,2,2,1])
+        new_user = c1.text_input("Jméno")
+        new_pass = c2.text_input("Heslo", type="password")
+        new_email = c3.text_input("E-mail pro notifikace")
+        
+        roles_available = ["Uživatel"]
+        if current_role == "Super Admin": roles_available.append("Administrátor")
+        new_role = c1.selectbox("Role", roles_available)
+        
+        if c4.button("Vytvořit"):
+            if new_user and new_pass and new_email:
+                if create_user(new_user, new_pass, new_email, new_role):
+                    st.success(f"Uživatel {new_user} vytvořen.")
+                    time.sleep(1); st.rerun()
+                else: st.error("Uživatel již existuje.")
+            else: st.warning("Vyplňte jméno, heslo i e-mail.")
+
+    st.subheader("Seznam uživatelů")
+    users_df = get_all_users()
+    if not users_df.empty:
+        for index, row in users_df.iterrows():
+            if row['username'] == SUPER_ADMIN_USER: continue
+            if current_role == "Administrátor" and row['role'] == "Administrátor": continue
+
+            with st.container(border=True):
+                c_info, c_del = st.columns([5, 1])
+                c_info.markdown(f"**{row['username']}** `({row['role']})` - 📧 {row['email']}")
+                can_delete = False
+                if current_role == "Super Admin": can_delete = True
+                elif current_role == "Administrátor" and row['role'] == "Uživatel": can_delete = True
+                
+                if can_delete:
+                    if c_del.button("Smazat", key=f"del_user_{row['username']}"):
+                        delete_user(row['username']); st.rerun()
+
+# -------------------------------------------------------------------------
+# STRÁNKA: PŘEHLED KAUZ (S CHYTRÝM HLEDÁNÍM)
+# -------------------------------------------------------------------------
+elif selected_page == "📊 Přehled kauz":
+    
+    ITEMS_PER_PAGE = 50  # <-- Tady jsou ty mezery navíc, které způsobují pád!
     if 'page' not in st.session_state:
-        st.session_state['page'] = 1
 
     # --- FUNKCE PRO NAČÍTÁNÍ DAT ---
     def get_zmeny_all():
@@ -873,45 +1096,3 @@ elif selected_page == "📜 Auditní historie":
         df_h.columns = ["Kdy", "Kdo", "Co se stalo", "Detail"]
         st.dataframe(df_h, use_container_width=True, hide_index=True)
     else: st.info("Prázdno.")
-
-elif selected_page == "👥 Správa uživatelů":
-    t.header("👥 Správa uživatelů")
-    current_role = st.session_state['user_role']
-    
-    with st.expander("➕ Vytvořit nového uživatele", expanded=True):
-        c1, c2, c3, c4 = st.columns([2,2,2,1])
-        new_user = c1.text_input("Jméno")
-        new_pass = c2.text_input("Heslo", type="password")
-        new_email = c3.text_input("E-mail pro notifikace")
-        
-        roles_available = ["Uživatel"]
-        if current_role == "Super Admin": roles_available.append("Administrátor")
-        new_role = c1.selectbox("Role", roles_available)
-        
-        if c4.button("Vytvořit"):
-            if new_user and new_pass and new_email:
-                if create_user(new_user, new_pass, new_email, new_role):
-                    st.success(f"Uživatel {new_user} vytvořen.")
-                    time.sleep(1); st.rerun()
-                else: st.error("Uživatel již existuje.")
-            else: st.warning("Vyplňte jméno, heslo i e-mail.")
-
-    st.subheader("Seznam uživatelů")
-    users_df = get_all_users()
-    if not users_df.empty:
-        for index, row in users_df.iterrows():
-            if row['username'] == SUPER_ADMIN_USER: continue
-            if current_role == "Administrátor" and row['role'] == "Administrátor": continue
-
-            with st.container(border=True):
-                c_info, c_del = st.columns([5, 1])
-                c_info.markdown(f"**{row['username']}** `({row['role']})` - 📧 {row['email']}")
-                can_delete = False
-                if current_role == "Super Admin": can_delete = True
-                elif current_role == "Administrátor" and row['role'] == "Uživatel": can_delete = True
-                
-                if can_delete:
-                    if c_del.button("Smazat", key=f"del_user_{row['username']}"):
-                        delete_user(row['username']); st.rerun()
-
-# start_scheduler() # DEAKTIVOVÁNO - POUŽÍVÁME HEROKU SCHEDULER
