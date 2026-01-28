@@ -777,20 +777,47 @@ with st.sidebar:
 
             if res:
                 is_run, prog, tot, mode, last_upd = res
-                now_naive = get_now().replace(tzinfo=None)
-                last_upd_naive = last_upd.replace(tzinfo=None) if last_upd else None
-                is_stale = (now_naive - last_upd_naive).total_seconds() > 600 if last_upd_naive else False
+                
+                # --- HLAVNÍ OPRAVA ČASU ---
+                now = get_now() # Aktuální čas v Praze
+                
+                # Pokud je čas z DB "naivní" (bez pásma), považujeme ho za UTC a převedeme na Prahu
+                if last_upd and last_upd.tzinfo is None:
+                    last_upd = pytz.utc.localize(last_upd).astimezone(pytz.timezone('Europe/Prague'))
+                
+                # Výpočet stáří dat (rozdíl v sekundách)
+                diff_seconds = (now - last_upd).total_seconds() if last_upd else 0
+                
+                # Zobrazíme progres jen pokud běží A data nejsou starší než 20 minut (1200s)
+                # Zvýšili jsme limit z 600 na 1200 pro jistotu
+                is_stale = diff_seconds > 1200 
 
                 if is_run and not is_stale:
                     st.info(f"**Režim:** {mode}")
-                    p_val = min(1.0, prog / tot) if tot > 0 else 0.0
+                    
+                    # Ošetření dělení nulou
+                    p_val = 0.0
+                    if tot > 0:
+                        p_val = min(1.0, float(prog) / float(tot))
+                    
                     st.progress(p_val)
-                    st.caption(f"Zpracováno {prog} z {tot} (Aktualizováno: {last_upd.strftime('%H:%M:%S')})")
+                    
+                    # Formátování času pro výpis
+                    time_str = last_upd.strftime('%H:%M:%S') if last_upd else "--:--"
+                    st.caption(f"Zpracováno **{prog}** z **{tot}**")
+                    st.caption(f"⏱️ Poslední update: {time_str} (před {int(diff_seconds)}s)")
                 else:
                     st.success("✅ Systém je v pohotovosti (spí)")
-                    st.caption(f"Naposledy aktivní: {last_upd.strftime('%d.%m. %H:%M') if last_upd else 'Nikdy'}")
+                    
+                    last_active = last_upd.strftime('%d.%m. %H:%M') if last_upd else 'Nikdy'
+                    st.caption(f"Naposledy aktivní: {last_active}")
+                    
+                    # Debug info (zobrazí se jen pokud něco nehraje)
+                    if is_run and is_stale:
+                        st.warning(f"⚠️ Worker v DB běží, ale data jsou stará {int(diff_seconds)}s. (Možná zaseknutý proces?)")
+
         except Exception as e:
-            st.error(f"Chyba čtení stavu: {e}")
+            st.error(f"Chyba stavu: {e}")
 
     # V bočním panelu pak jen zavoláte:
     render_status()
