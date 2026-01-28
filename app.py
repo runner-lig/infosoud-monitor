@@ -660,21 +660,258 @@ selected_page = st.sidebar.radio("Menu", menu_options)
 # STRÁNKY (ZKRÁCENÉ LOGY/AUDIT PRO PŘEHLEDNOST)
 # -------------------------------------------------------------------------
 
-if selected_page == "📊 Přehled kauz":
-    st.subheader("📊 Přehled sledovaných kauz")
-    # Zde pokračuje vaše tabulková logika z původního kódu...
-    st.info("Tabulka kauz se načítá...")
+    
+    ITEMS_PER_PAGE = 50
+    if 'page' not in st.session_state:
+        st.session_state['page'] = 1
 
+    # --- FUNKCE PRO NAČÍTÁNÍ DAT ---
+    def get_zmeny_all():
+        conn = None; db_pool = None
+        try:
+            conn, db_pool = get_db_connection()
+            return pd.read_sql_query("SELECT * FROM pripady WHERE ma_zmenu = TRUE ORDER BY id DESC", conn)
+        except: return pd.DataFrame()
+        finally: 
+            if conn and db_pool: db_pool.putconn(conn)
+
+    def get_all_green_cases_raw():
+        conn = None; db_pool = None
+        try:
+            conn, db_pool = get_db_connection()
+            return pd.read_sql_query("SELECT * FROM pripady WHERE ma_zmenu = FALSE ORDER BY id DESC", conn)
+        except: return pd.DataFrame()
+        finally: 
+            if conn and db_pool: db_pool.putconn(conn)
+
+    # --- HLAVNÍ VÝPIS KAUZ ---
+    df_zmeny = get_zmeny_all()
+
+    c_search_input, c_search_btn = st.columns([4, 1])
+    with c_search_input:
+        search_query_input = st.text_input("Hledat v archivu (Název, značka, soud, text)", 
+                                           label_visibility="collapsed", 
+                                           placeholder="🔍 Hledat v archivu... (např. 20 C 70 / 2014)")
+    with c_search_btn:
+        search_clicked = st.button("🔍 Hledat", use_container_width=True)
+
+    if 'last_search' not in st.session_state: st.session_state['last_search'] = ""
+    if search_clicked or search_query_input != st.session_state['last_search']:
+        st.session_state['page'] = 1
+        st.session_state['last_search'] = search_query_input
+        if search_clicked: st.rerun()
+
+    active_search_query = st.session_state['last_search']
+    df_all_green = get_all_green_cases_raw()
+    
+    if not df_all_green.empty and active_search_query:
+        q_lower = active_search_query.lower()
+        q_no_space = q_lower.replace(" ", "")
+        
+        def filter_row(row):
+            if q_lower in str(row['oznaceni']).lower(): return True
+            if q_lower in str(row['realny_nazev_soudu']).lower(): return True
+            if q_lower in str(row['posledni_udalost']).lower(): return True
+            try:
+                p = json.loads(row['params_json'])
+                znacka = f"{p.get('senat')}{p.get('druh')}{p.get('cislo')}/{p.get('rocnik')}".lower()
+                if q_no_space in znacka: return True
+            except: pass
+            return False
+
+        mask = df_all_green.apply(filter_row, axis=1)
+        df_filtered = df_all_green[mask]
+    else:
+        df_filtered = df_all_green
+
+    total_green = len(df_filtered)
+    total_pages = math.ceil(total_green / ITEMS_PER_PAGE)
+    if total_pages < 1: total_pages = 1
+    
+    start_idx = (st.session_state['page'] - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    df_ostatni = df_filtered.iloc[start_idx:end_idx]
+
+    def akce_videl_jsem(id_spisu): resetuj_upozorneni(id_spisu)
+    def akce_smazat(id_spisu): smaz_pripad(id_spisu)
+    def akce_videl_jsem_vse(): resetuj_vsechna_upozorneni()
+
+    # --- A) ČERVENÁ SEKCE ---
+    if not df_zmeny.empty:
+        col_head, col_btn = st.columns([3, 1])
+        with col_head: st.subheader(f"🚨 Případy se změnou ({len(df_zmeny)})")
+        with col_btn: st.button("👁️ Viděl jsem vše", on_click=akce_videl_jsem_vse, type="primary", use_container_width=True)
+
+        for index, row in df_zmeny.iterrows():
+            try:
+                p = json.loads(row['params_json'])
+                spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
+                kod_soudu = p.get('soud')
+                nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
+                formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
+            except:
+                spisova_znacka = "?"; nazev_soudu = "?"; formatted_time = ""
+
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns([2, 3, 4, 1])
+                with c1:
+                    st.markdown(f"### {row['oznaceni']}")
+                    st.error("🚨 **NOVÁ UDÁLOST**") 
+                with c2:
+                    st.markdown(f"📂 **{spisova_znacka}**")
+                    st.markdown(f"🏛️ {nazev_soudu}")
+                with c3:
+                    st.write(f"📅 **{row['posledni_udalost']}**")
+                    st.caption(f"Kontrolováno: {formatted_time}")
+                with c4:
+                    st.link_button("Otevřít", row['url'])
+                    with st.popover("✏️", help="Upravit název"):
+                        novy_nazev = st.text_input("Název", value=row['oznaceni'], key=f"edit_red_{row['id']}")
+                        if st.button("Uložit", key=f"save_red_{row['id']}"):
+                            prejmenuj_pripad(row['id'], novy_nazev); st.rerun()
+                    st.button("👁️ Viděl", key=f"seen_{row['id']}", on_click=akce_videl_jsem, args=(row['id'],))
+                    with st.popover("🗑️", help="Odstranit"):
+                        st.write("Opravdu smazat?")
+                        if st.button("Ano", key=f"confirm_del_red_{row['id']}", type="primary"):
+                            akce_smazat(row['id']); st.rerun()
+
+    # --- B) ZELENÁ SEKCE ---
+    if not df_zmeny.empty: st.markdown("---")
+    
+    if active_search_query:
+        st.subheader(f"🔍 Výsledky hledání: '{active_search_query}' (Nalezeno: {total_green})")
+    else:
+        st.subheader(f"✅ Případy beze změn (Celkem: {total_green})")
+    
+    if df_ostatni.empty:
+        st.info("Žádné případy nenalezeny.")
+    else:
+        for index, row in df_ostatni.iterrows():
+            try:
+                p = json.loads(row['params_json'])
+                spisova_znacka = f"{p.get('senat')} {p.get('druh')} {p.get('cislo')} / {p.get('rocnik')}"
+                kod_soudu = p.get('soud')
+                nazev_soudu = SOUDY_MAPA.get(kod_soudu, kod_soudu)
+                formatted_time = pd.to_datetime(row['posledni_kontrola']).strftime("%d. %m. %Y %H:%M")
+            except:
+                spisova_znacka = "?"; nazev_soudu = "?"; formatted_time = ""
+
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns([2, 3, 4, 1])
+                with c1:
+                    st.markdown(f"**{row['oznaceni']}**")
+                    st.caption("✅ Bez změny")
+                with c2:
+                    st.markdown(f"📂 **{spisova_znacka}**")
+                    st.caption(f"🏛️ {nazev_soudu}")
+                with c3:
+                    st.write(f"📅 **{row['posledni_udalost']}**")
+                    st.caption(f"Kontrolováno: {formatted_time}")
+                with c4:
+                    st.link_button("Otevřít", row['url'])
+                    with st.popover("✏️", help="Upravit název"):
+                        novy_nazev = st.text_input("Název", value=row['oznaceni'], key=f"edit_green_{row['id']}")
+                        if st.button("Uložit", key=f"save_green_{row['id']}"):
+                            prejmenuj_pripad(row['id'], novy_nazev); st.rerun()
+                    with st.popover("🗑️", help="Odstranit"):
+                        st.write("Opravdu smazat?")
+                        if st.button("Ano", key=f"confirm_del_green_{row['id']}", type="primary"):
+                            akce_smazat(row['id']); st.rerun()
+
+    if total_pages > 1:
+        st.markdown("---")
+        c_prev, c_info, c_next = st.columns([1, 2, 1])
+        with c_prev:
+            if st.session_state['page'] > 1:
+                if st.button("⬅️ Předchozí"):
+                    st.session_state['page'] -= 1; st.rerun()
+        with c_info:
+            st.markdown(f"<div style='text-align: center'>Strana <b>{st.session_state['page']}</b> z {total_pages}</div>", unsafe_allow_html=True)
+        with c_next:
+            if st.session_state['page'] < total_pages:
+                if st.button("Další ➡️"):
+                    st.session_state['page'] += 1; st.rerun()
+
+# -------------------------------------------------------------------------
+# STRÁNKA: LOGY KONTROL
+# -------------------------------------------------------------------------
 elif selected_page == "🤖 Logy kontrol":
-    st.header("🤖 Historie automatických kontrol")
-    st.dataframe(get_system_logs(), use_container_width=True, hide_index=True)
+    st.header("🤖 Historie automatických kontrol (poslední 3 dny)")
+    
+    df_logs = get_system_logs(dny=3)
+    
+    if not df_logs.empty:
+        # Převod na hezčí formát
+        df_logs['start_time'] = pd.to_datetime(df_logs['start_time']).dt.strftime("%d.%m.%Y %H:%M")
+        # Výpočet trvání
+        df_logs['trvani'] = (pd.to_datetime(df_logs['end_time']) - pd.to_datetime(df_logs['start_time'], format="%d.%m.%Y %H:%M")).dt.total_seconds().apply(lambda x: f"{int(x // 60)} min {int(x % 60)} s")
+        
+        # Sloupec "Ikona" podle režimu
+        def get_icon(mode_text):
+            if "NOČNÍ" in str(mode_text): return "🌙"
+            if "DENNÍ" in str(mode_text): return "☀️"
+            return "❓"
+            
+        df_logs['ikona'] = df_logs['mode'].apply(get_icon)
+        
+        # Zobrazíme jen to podstatné
+        df_display = df_logs[['start_time', 'ikona', 'mode', 'processed_count', 'trvani']].copy()
+        df_display.columns = ["Začátek", "", "Režim", "Zkontrolováno spisů", "Doba trvání"]
+        
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+    else:
+        st.info("Zatím neproběhla žádná kontrola (nebo je databáze prázdná).")
 
+# -------------------------------------------------------------------------
+# STRÁNKA: AUDITNÍ HISTORIE
+# -------------------------------------------------------------------------
 elif selected_page == "📜 Auditní historie":
-    st.header("📜 Auditní historie")
-    st.dataframe(get_historie(), use_container_width=True, hide_index=True)
+    st.header("📜 Kdo co dělal")
+    df_h = get_historie()
+    if not df_h.empty:
+        df_h['datum'] = pd.to_datetime(df_h['datum']).dt.strftime("%d.%m.%Y %H:%M")
+        df_h.columns = ["Kdy", "Kdo", "Co se stalo", "Detail"]
+        st.dataframe(df_h, use_container_width=True, hide_index=True)
+    else: st.info("Prázdno.")
 
 elif selected_page == "👥 Správa uživatelů":
-    st.header("👥 Správa uživatelů")
-    # Zde pokračuje vaše logika správy uživatelů...
+    t.header("👥 Správa uživatelů")
+    current_role = st.session_state['user_role']
+    
+    with st.expander("➕ Vytvořit nového uživatele", expanded=True):
+        c1, c2, c3, c4 = st.columns([2,2,2,1])
+        new_user = c1.text_input("Jméno")
+        new_pass = c2.text_input("Heslo", type="password")
+        new_email = c3.text_input("E-mail pro notifikace")
+        
+        roles_available = ["Uživatel"]
+        if current_role == "Super Admin": roles_available.append("Administrátor")
+        new_role = c1.selectbox("Role", roles_available)
+        
+        if c4.button("Vytvořit"):
+            if new_user and new_pass and new_email:
+                if create_user(new_user, new_pass, new_email, new_role):
+                    st.success(f"Uživatel {new_user} vytvořen.")
+                    time.sleep(1); st.rerun()
+                else: st.error("Uživatel již existuje.")
+            else: st.warning("Vyplňte jméno, heslo i e-mail.")
+
+    st.subheader("Seznam uživatelů")
+    users_df = get_all_users()
+    if not users_df.empty:
+        for index, row in users_df.iterrows():
+            if row['username'] == SUPER_ADMIN_USER: continue
+            if current_role == "Administrátor" and row['role'] == "Administrátor": continue
+
+            with st.container(border=True):
+                c_info, c_del = st.columns([5, 1])
+                c_info.markdown(f"**{row['username']}** `({row['role']})` - 📧 {row['email']}")
+                can_delete = False
+                if current_role == "Super Admin": can_delete = True
+                elif current_role == "Administrátor" and row['role'] == "Uživatel": can_delete = True
+                
+                if can_delete:
+                    if c_del.button("Smazat", key=f"del_user_{row['username']}"):
+                        delete_user(row['username']); st.rerun()
 
 # start_scheduler() # DEAKTIVOVÁNO - POUŽÍVÁME HEROKU SCHEDULER
