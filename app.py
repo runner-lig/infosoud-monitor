@@ -22,7 +22,10 @@ import extra_streamlit_components as stx
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- KONFIGURACE UI ---
-st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
+try:
+    st.set_page_config(page_title="Infosoud Monitor", page_icon="⚖️", layout="wide")
+except:
+    pass # Ignorujeme, pokud běžíme jako worker bez prohlížeče
 
 # --- 🕰️ NASTAVENÍ ČASOVÉHO PÁSMA (CZECHIA) ---
 def get_now():
@@ -559,13 +562,18 @@ def je_pripad_skonceny(text_udalosti):
     return "skončení věci" in txt or "pravomoc" in txt or "vyřízeno" in txt
 
 def monitor_job():
-    if st.monitor_status.get("running", False): return
+    # Pomocná funkce pro bezpečný zápis do Streamlit stavu
+    def update_status(key, value):
+        if hasattr(st, "monitor_status"):
+            st.monitor_status[key] = value
 
-    # START
+    if hasattr(st, "monitor_status") and st.monitor_status.get("running"):
+        return
+
+    update_status("running", True)
     start_ts = get_now()
-    st.monitor_status["running"] = True
-    st.monitor_status["start_time"] = start_ts
-    st.monitor_status["progress"] = 0
+    update_status("start_time", start_ts)
+    update_status("progress", 0)
     
     conn = None; db_pool = None
     try:
@@ -576,15 +584,8 @@ def monitor_job():
         db_pool.putconn(conn); conn = None 
         
         aktualni_hodina = get_now().hour
-        
-        aktivni_pripady = []
-        skoncene_pripady = []
-        for r in all_rows:
-            if je_pripad_skonceny(r[4]): skoncene_pripady.append(r)
-            else: aktivni_pripady.append(r)
-        
-        target_rows = []
-        rezim_text = ""
+        aktivni_pripady = [r for r in all_rows if not je_pripad_skonceny(r[4])]
+        skoncene_pripady = [r for r in all_rows if je_pripad_skonceny(r[4])]
         
         if aktualni_hodina == 2: 
             target_rows = skoncene_pripady
@@ -593,9 +594,9 @@ def monitor_job():
             target_rows = aktivni_pripady
             rezim_text = "☀️ DENNÍ KONTROLA (AKTIVNÍ)"
             
-        st.monitor_status["total"] = len(target_rows)
-        st.monitor_status["mode"] = rezim_text
-        print(f"--- START {rezim_text} ---")
+        update_status("total", len(target_rows))
+        update_status("mode", rezim_text)
+        print(f"--- START {rezim_text} ({len(target_rows)} spisů) ---")
         
         dokonceno = 0
         if target_rows:
@@ -603,23 +604,21 @@ def monitor_job():
                 futures = [executor.submit(zkontroluj_jeden_pripad, row) for row in target_rows]
                 for future in as_completed(futures):
                     dokonceno += 1
-                    st.monitor_status["progress"] = dokonceno
+                    update_status("progress", dokonceno)
             
-        print(f"--- KONEC KONTROLY ---")
-        
-        # --- ZÁPIS DO DB LOGU (NOVÉ) ---
         end_ts = get_now()
-        conn, db_pool = get_db_connection() # Musíme si vzít nové spojení
+        conn, db_pool = get_db_connection()
         c = conn.cursor()
         c.execute("INSERT INTO system_logs (start_time, end_time, mode, processed_count) VALUES (%s, %s, %s, %s)",
                   (start_ts, end_ts, rezim_text, dokonceno))
         conn.commit()
+        print(f"--- KONEC KONTROLY ({dokonceno} zpracováno) ---")
                     
     except Exception as e:
         print(f"Chyba scheduleru: {e}")
     finally:
-        st.monitor_status["running"] = False
-        st.monitor_status["last_finished"] = get_now()
+        update_status("running", False)
+        update_status("last_finished", get_now())
         if conn and db_pool: db_pool.putconn(conn)
 
 start_scheduler()
