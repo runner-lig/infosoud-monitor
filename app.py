@@ -605,6 +605,9 @@ def monitor_job():
                 for future in as_completed(futures):
                     dokonceno += 1
                     update_status("progress", dokonceno)
+    # Tento řádek ti pošle info do Heroku logů:
+    if dokonceno % 10 == 0: # Vypíše každých 10 zpracovaných spisů
+        print(f"⏳ Průběh: {dokonceno} / {len(target_rows)} zpracováno...")
             
         end_ts = get_now()
         conn, db_pool = get_db_connection()
