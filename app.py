@@ -896,12 +896,14 @@ if selected_page == "👥 Správa uživatelů":
                         delete_user(row['username']); st.rerun()
 
 # -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 # STRÁNKA: PŘEHLED KAUZ (S CHYTRÝM HLEDÁNÍM)
 # -------------------------------------------------------------------------
 elif selected_page == "📊 Přehled kauz":
     
-    ITEMS_PER_PAGE = 50  # <-- Tady jsou ty mezery navíc, které způsobují pád!
+    ITEMS_PER_PAGE = 50
     if 'page' not in st.session_state:
+        st.session_state['page'] = 1
 
     # --- FUNKCE PRO NAČÍTÁNÍ DAT ---
     def get_zmeny_all():
