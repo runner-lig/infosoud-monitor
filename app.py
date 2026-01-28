@@ -199,15 +199,10 @@ def init_db():
                       mode TEXT,
                       last_update TIMESTAMP)''')
         
-        # Odsazení musí být stejné jako u c.execute výše!
-        c.execute("INSERT INTO system_status (id, is_running) SELECT 1, False WHERE NOT EXISTS (SELECT 1 FROM system_status WHERE id = 1)")
+        # TENTO ŘÁDEK MUSÍ BÝT ODSZENÝ STEJNĚ JAKO C.EXECUTE VÝŠE!
+        c.execute("INSERT INTO system_status (id, is_running, progress, total, mode) SELECT 1, False, 0, 0, 'Spí' WHERE NOT EXISTS (SELECT 1 FROM system_status WHERE id = 1)")
                      
         conn.commit()
-    except Exception as e:
-        st.error(f"Chyba při inicializaci DB: {e}")
-        st.stop()
-    finally:
-        if conn and db_pool: db_pool.putconn(conn)
 
 init_db()
 
@@ -594,17 +589,13 @@ def je_pripad_skonceny(text_udalosti):
     return "skončení věci" in txt or "pravomoc" in txt or "vyřízeno" in txt
 
 def monitor_job():
-    """
-    Hlavní kontrolní funkce, která stahuje data z Infosoudu.
-    Zapisuje průběh do DB (system_status), aby byl viditelný v UI i při běhu z workeru.
-    """
-    # 1. Pomocná funkce pro bezpečný zápis stavu do UI i do DB
-    def update_status_all(key, value):
-        # Zápis do Streamlit paměti (pro uživatele, co spustí kontrolu ručně)
+    # --- TATO ČÁST JE KLÍČOVÁ PRO PROPOJENÍ S UI ---
+    def update_status(key, value):
+        # 1. Zápis do paměti (pro ruční spuštění z webu)
         if hasattr(st, "monitor_status"):
             st.monitor_status[key] = value
         
-        # Zápis do SQL databáze (pro uživatele, co sledují automatický worker)
+        # 2. Zápis do SQL (aby to viděl uživatel, když běží worker na pozadí)
         try:
             conn_upd, pool_upd = get_db_connection()
             c_upd = conn_upd.cursor()
@@ -618,9 +609,8 @@ def monitor_job():
                 c_upd.execute("UPDATE system_status SET mode = %s, last_update = %s WHERE id = 1", (value, get_now()))
             conn_upd.commit()
             pool_upd.putconn(conn_upd)
-        except Exception as e:
-            # V bare mode (headless) ignorujeme chyby zápisu do st.
-            pass
+        except:
+            pass # Ignorujeme chyby v headless režimu
 
     # 2. Kontrola, zda už kontrola neběží
     if hasattr(st, "monitor_status") and st.monitor_status.get("running"):
