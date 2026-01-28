@@ -340,6 +340,26 @@ def get_system_logs(dny=3):
     finally:
         if conn and db_pool: db_pool.putconn(conn)
 
+def vycistit_stare_logy(dny=30):
+    """Smaže systémové logy a historii starší než stanovený počet dní."""
+    conn = None; db_pool = None
+    try:
+        limit = get_now() - datetime.timedelta(days=dny)
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
+        
+        # Smazání starých logů kontrol
+        c.execute("DELETE FROM system_logs WHERE start_time < %s", (limit,))
+        # Smazání staré historie akcí uživatelů
+        c.execute("DELETE FROM historie WHERE datum < %s", (limit,))
+        
+        conn.commit()
+        print(f"🧹 Úklid: Smazány záznamy starší než {dny} dní.")
+    except Exception as e:
+        print(f"Chyba při úklidu DB: {e}")
+    finally:
+        if conn and db_pool: db_pool.putconn(conn)
+
 # -------------------------------------------------------------------------
 # 2. LOGIKA ODESÍLÁNÍ
 # -------------------------------------------------------------------------
@@ -657,6 +677,9 @@ def monitor_job():
                   (start_ts, end_ts, rezim_text, dokonceno))
         conn.commit()
         print(f"--- KONEC KONTROLY ({dokonceno} zpracováno) ---")
+
+        # NOVÉ: Spustíme úklid hned po kontrole
+        vycistit_stare_logy(dny=30)
                     
     except Exception as e:
         print(f"❌ Chyba scheduleru: {e}")
