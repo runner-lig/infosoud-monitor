@@ -402,7 +402,7 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
     msg['From'] = SMTP_EMAIL
     msg['Subject'] = f"🚨 Změna ve spisu: {nazev}"
 
-    # 1. Čistý text
+    # 1. Čistý text (pro staré klienty)
     text_body = f"""
     Změna u případu: {nazev}
     Soud: {soud}
@@ -418,11 +418,11 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
     Infosoud Monitor (Odesláno: {cas_odeslani})
     """
 
-    # 2. HTML verze s barvičkami a časem
+    # 2. HTML verze (upravená - nadpis bez červené barvy)
     html_body = f"""
     <html>
       <body>
-        <h3 style="color: #d32f2f;">🚨 Změna u případu: {nazev}</h3>
+        <h3>🚨 Změna u případu: {nazev}</h3>
         <p>
            <b>Soud:</b> {soud}<br>
            <b>Spisová značka:</b> {znacka}
@@ -933,21 +933,21 @@ with st.sidebar.expander("🛠️ Diagnostika (Admin)", expanded=False):
     st.write("Test funkčnosti e-mailů.")
     
     if st.button("📧 Odeslat testovací e-mail", use_container_width=True):
+        # Ověření, zda je nadefinován e-mail
         if not SMTP_EMAIL or not SMTP_PASSWORD:
              st.error("Nemáš nastavené proměnné SMTP_EMAIL nebo SMTP_PASSWORD!")
         else:
             with st.spinner("Odesílám testovací zprávu..."):
                 try:
-                    # Simulujeme notifikaci - POUŽÍVÁME get_now()
+                    # Simulujeme notifikaci s novými parametry
                     odeslat_email_notifikaci(
                         nazev="TESTOVACÍ SIMULACE", 
-                        # ZDE JE ZMĚNA: get_now() místo datetime.datetime.now()
-                        udalost=f"Toto je test z Heroku.\nČas serveru (Czechia): {get_now().strftime('%H:%M:%S')}", 
+                        udalost=f"Toto je test z Heroku.\nČas serveru: {get_now().strftime('%d.%m.%Y %H:%M:%S')}", 
                         znacka="Test 123/2024",
-                        soud="Nejvyšší soud testovací",
-                        url="https://infosoud.justice.cz"
+                        soud="Nejvyšší soud (Test)",      # Nový parametr: Soud
+                        url="https://infosoud.justice.cz" # Nový parametr: Odkaz
                     )
-                    st.success("Odesláno! Zkontroluj si e-mail.")
+                    st.success("Odesláno! Zkontroluj si e-mail (i spam).")
                 except Exception as e:
                     st.error(f"Chyba: {e}")
 
