@@ -1219,22 +1219,27 @@ elif selected_page == "⚡ Logy kontrol":
     df_logs = get_system_logs(dny=3)
     
     if not df_logs.empty:
-        # Převod na hezčí formát
-        df_logs['start_time'] = pd.to_datetime(df_logs['start_time']).dt.strftime("%d.%m.%Y %H:%M")
-        # Výpočet trvání
-        df_logs['trvani'] = (pd.to_datetime(df_logs['end_time']) - pd.to_datetime(df_logs['start_time'], format="%d.%m.%Y %H:%M")).dt.total_seconds().apply(lambda x: f"{int(x // 60)} min {int(x % 60)} s")
+        # 1. Konverze na datetime objekty
+        df_logs['start_time'] = pd.to_datetime(df_logs['start_time'])
+        df_logs['end_time'] = pd.to_datetime(df_logs['end_time'])
         
-        # Sloupec "Ikona" podle režimu
-        def get_icon(mode_text):
-            if "NOČNÍ" in str(mode_text): return "🌙"
-            if "DENNÍ" in str(mode_text): return "☀️"
-            return "❓"
-            
-        df_logs['ikona'] = df_logs['mode'].apply(get_icon)
+        # 2. Výpočet trvání (děláme to před konverzí zón, aby to sedělo)
+        df_logs['trvani'] = (df_logs['end_time'] - df_logs['start_time']).dt.total_seconds().apply(lambda x: f"{int(x // 60)} min {int(x % 60)} s")
+
+        # 3. Oprava časové zóny (UTC -> Europe/Prague)
+        # Pokud databáze vrací "naivní" čas (bez info o zóně), řekneme, že je to UTC
+        if df_logs['start_time'].dt.tz is None:
+            df_logs['start_time'] = df_logs['start_time'].dt.tz_localize('UTC')
         
-        # Zobrazíme jen to podstatné
-        df_display = df_logs[['start_time', 'ikona', 'mode', 'processed_count', 'trvani']].copy()
-        df_display.columns = ["Začátek", "", "Režim", "Zkontrolováno spisů", "Doba trvání"]
+        # Převedeme na Prahu
+        df_logs['start_time'] = df_logs['start_time'].dt.tz_convert('Europe/Prague')
+        
+        # 4. Formátování na hezký text
+        df_logs['start_time'] = df_logs['start_time'].dt.strftime("%d.%m.%Y %H:%M")
+        
+        # 5. Výběr sloupců (IKONA ODSTRANĚNA)
+        df_display = df_logs[['start_time', 'mode', 'processed_count', 'trvani']].copy()
+        df_display.columns = ["Začátek", "Režim", "Zkontrolováno spisů", "Doba trvání"]
         
         st.dataframe(df_display, use_container_width=True, hide_index=True)
     else:
