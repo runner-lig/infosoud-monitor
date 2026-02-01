@@ -818,7 +818,7 @@ if not st.session_state['logged_in']:
 
 # --- HLAVNÍ APLIKACE ---
 
-st.title("⚖️ Monitor Soudních Spisů")
+st.title("⚖️ Monitor soudních spisů")
 
 with st.sidebar:
     st.write(f"👤 **{st.session_state['current_user']}**")
