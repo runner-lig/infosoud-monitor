@@ -403,7 +403,7 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
     
     # --- ZDE JE VAŠE ZMĚNA ---
     # Předmět nyní obsahuje spisovou značku (např. "Změna ve spisu: 81 T 8 / 2020")
-    msg['Subject'] = f"Změna ve spisu: {znacka}"
+    msg['Subject'] = f"🚨 Změna ve spisu: {znacka}"
 
     # 1. Čistý text
     text_body = f"""
