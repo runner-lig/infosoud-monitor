@@ -1250,7 +1250,7 @@ elif selected_page == "⚡ Logy kontrol":
 # STRÁNKA: AUDITNÍ HISTORIE
 # -------------------------------------------------------------------------
 elif selected_page == "📜 Auditní historie":
-    st.header("📜 Kdo co dělal")
+    st.header("📜 Kdo co dělal?")
     df_h = get_historie()
     if not df_h.empty:
         df_h['datum'] = pd.to_datetime(df_h['datum']).dt.strftime("%d.%m.%Y %H:%M")
