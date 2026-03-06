@@ -1257,3 +1257,47 @@ elif selected_page == "📜 Auditní historie":
         df_h.columns = ["Kdy", "Kdo", "Co se stalo", "Detail"]
         st.dataframe(df_h, use_container_width=True, hide_index=True)
     else: st.info("Prázdno.")
+
+st.markdown("---")
+st.header("🛠️ Nástroj pro migraci URL na gov.cz (Jednorázovka)")
+if st.button("🚀 Spustit migraci starých URL na nové", type="primary"):
+    with st.spinner("Přepisuji databázi a generuji nové odkazy..."):
+        conn, db_pool = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT id, params_json FROM pripady")
+        radky = c.fetchall()
+        upraveno = 0
+
+        for cid, params_str in radky:
+            try:
+                p = json.loads(params_str)
+                base_url = "https://infosoud.gov.cz/InfoSoud/detail-rizeni"
+                
+                typ = p.get('typ')
+                soud = p.get('soud')
+                senat = p.get('senat', '')
+                druh = p.get('druh', '')
+                if druh: druh = druh.upper()
+                cislo = p.get('cislo', '')
+                rocnik = p.get('rocnik', '')
+
+                # Sestavení nové URL podle logiky jednotlivých soudů
+                if typ == 'ns' or soud == 'NS':
+                    nova_url = f"{base_url}?typOrganizace=NEJVYSSI&cisloSenatu={senat}&druhVeci={druh}&bcVec={cislo}&rocnik={rocnik}"
+                else:
+                    # Rozlišení mezi okresniSoud a druhOrganizace
+                    param_name = "okresniSoud"
+                    # Krajské a Vrchní soudy (případně Městský v Praze, který funguje jako krajský)
+                    if typ in ['ks', 'vs'] or (soud and soud.startswith(('KS', 'VS', 'MSPHAAB'))):
+                        param_name = "druhOrganizace"
+                    
+                    nova_url = f"{base_url}?typOrganizace=VSECHNY_KRAJE&{param_name}={soud}&cisloSenatu={senat}&druhVeci={druh}&bcVec={cislo}&rocnik={rocnik}"
+
+                c.execute("UPDATE pripady SET url = %s WHERE id = %s", (nova_url, cid))
+                upraveno += 1
+            except Exception as e:
+                st.error(f"Chyba u spisu ID {cid}: {e}")
+
+        conn.commit()
+        db_pool.putconn(conn)
+        st.success(f"✅ Hotovo! Zmigrováno {upraveno} případů.")
