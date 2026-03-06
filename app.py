@@ -519,75 +519,86 @@ USER_AGENTS = [
 ]
 
 def stahni_data_z_infosoudu(params):
-    url = "https://infosoud.gov.cz/InfoSoud/detail-rizeni"
+    url = "https://infosoud.gov.cz/api/v1/rizeni/vyhledej"
     
     typ = params.get('typ')
     soud = params.get('soud')
     
-    req_params = {
+    # 1. Sestavení payloadu (přesně podle API)
+    payload = {
         'cisloSenatu': params.get('senat', ''),
         'druhVeci': params.get('druh', ''),
         'bcVec': params.get('cislo', ''),
         'rocnik': params.get('rocnik', '')
     }
     
-    # Sestavení správných parametrů pro konkrétní typ soudu
+    # Správné přiřazení soudu do payloadu
     if typ == 'ns' or soud == 'NS':
-        req_params['typOrganizace'] = 'NEJVYSSI'
+        payload['typOrganizace'] = 'NEJVYSSI'
     else:
-        req_params['typOrganizace'] = 'VSECHNY_KRAJE'
-        # KS, VS a Městský soud v Praze (MSPHAAB funguje jako KS)
+        payload['typOrganizace'] = 'VSECHNY_KRAJE'
         if typ in ['ks', 'vs'] or (soud and soud.startswith(('KS', 'VS', 'MSPHAAB'))):
-            req_params['druhOrganizace'] = soud
+            payload['druhOrganizace'] = soud
         else:
-            req_params['okresniSoud'] = soud
+            payload['okresniSoud'] = soud
             
-    agent = random.choice(USER_AGENTS)
     headers = {
-        "User-Agent": agent,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "cs,en-US;q=0.7,en;q=0.3",
-        "Referer": "https://infosoud.gov.cz/",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
+        "User-Agent": random.choice(USER_AGENTS),
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
     
     try:
-        r = requests.get(url, params=req_params, headers=headers, timeout=10)
+        # 2. Odeslání POST požadavku
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
         
-        if "recaptcha" in r.text.lower() or "spam" in r.text.lower():
-            print("⚠️ POZOR: Infosoud vrátil podezření na robota (Captcha).")
-            return None
-
-        soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # Pojistka pro případ, že spis na novém webu neexistuje
-        if "Řízení nebylo nalezeno" in soup.text or "Nenalezeno" in soup.text: 
+        # Pokud API vrátí chybu (např. 404 Nenalezeno nebo 500)
+        if r.status_code != 200:
             return None
             
-        udalosti = []
-        for row in soup.find_all('tr'):
-            cols = row.find_all('td')
+        data = r.json()
+        
+        # Pokud API nevrátí události
+        if not data or 'udalosti' not in data:
+            return None
             
-            # Kontrola, zda má řádek alespoň 2 sloupce
-            if len(cols) >= 2:
-                datum = cols[1].get_text(strip=True)
+        udalosti_raw = data['udalosti']
+        if not udalosti_raw:
+            return []
+            
+        # 3. Zpracování a překlad dat
+        # Seřadíme pro jistotu podle data a pořadí
+        udalosti_raw.sort(key=lambda x: (x.get('datum', ''), x.get('poradi', 0)))
+        
+        # Malý slovník pro hezčí výpisy v e-mailech
+        preklad_kodu = {
+            "ZAHAJ_RIZ": "Zahájení řízení / Došlo soudu",
+            "VYD_ROZH": "Datum vydání rozhodnutí",
+            "ST_VEC_VYR": "Vyřízení věci",
+            "VR_SP_NS": "Vrácení spisu"
+        }
+        
+        udalosti_formatovane = []
+        for u in udalosti_raw:
+            datum_raw = u.get('datum', '') # Z API chodí YYYY-MM-DD
+            try:
+                # Převod na náš zvyklý český formát DD.MM.YYYY
+                datum_obj = datetime.datetime.strptime(datum_raw, '%Y-%m-%d')
+                datum_str = datum_obj.strftime('%d.%m.%Y')
+            except Exception:
+                datum_str = datum_raw
                 
-                # Pokud druhý sloupec obsahuje platné datum
-                if re.match(r'^\d{2}\.\d{2}\.\d{4}$', datum):
-                    # Extrakce textu události z prvního sloupce
-                    text = cols[0].get_text(separator=" ", strip=True)
-                    
-                    # Odstranění otravného otazníku z <gov-tooltip>, pokud se načetl
-                    if text.startswith('?'):
-                        text = text[1:].strip()
-                        
-                    udalosti.append(f"{datum} - {text}")
-                    
-        return udalosti
+            kod_udalosti = u.get('udalost', 'NEZNAMA_UDALOST')
+            
+            # Zkusíme přeložit, pokud nenajdeme, použijeme surový kód z API
+            text_udalosti = preklad_kodu.get(kod_udalosti, kod_udalosti)
+            
+            udalosti_formatovane.append(f"{datum_str} - {text_udalosti}")
+            
+        return udalosti_formatovane
         
     except Exception as e:
-        print(f"Chyba při stahování: {e}")
+        print(f"Chyba při komunikaci s API: {e}")
         return None
 
 def pridej_pripad(url, oznaceni):
