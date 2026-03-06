@@ -736,7 +736,8 @@ def zkontroluj_jeden_pripad(row):
                 # UPRAVENO: Předáváme i nazev_soudu a url
                 odeslat_email_notifikaci(name, new_data[-1], spis_zn, nazev_soudu, url)
             else:
-                c.execute("UPDATE pripady SET posledni_kontrola=%s WHERE id=%s", (now, cid))
+                c.execute("UPDATE pripady SET posledni_kontrola=%s, posledni_udalost=%s WHERE id=%s", 
+                          (now, new_data[-1], cid))
                 conn.commit()
             return True
             
