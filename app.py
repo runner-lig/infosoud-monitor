@@ -1010,28 +1010,6 @@ with st.sidebar:
         del st.session_state['vysledek_akce']
         
     st.divider()
-# 👇 SEM VLOŽ TEN TESTER 👇
-    with st.sidebar.expander("📧 Test doručení", expanded=True):
-        st.write("Simulace nalezení změny u fiktivního spisu.")
-        if st.button("🚀 Odpálit testovací notifikaci", use_container_width=True):
-            with st.spinner("Odesílám..."):
-                try:
-                    test_nazev = "TEST DORUČENÍ"
-                    test_udalost = f"{get_now().strftime('%d.%m.%Y')} - TESTOVACÍ ZMĚNA (Nové e-mailové nastavení)"
-                    test_znacka = "99 TEST 1/2026"
-                    test_soud = "Testovací soudní dvůr"
-                    test_url = "https://infosoud.gov.cz"
-                    odeslat_email_notifikaci(test_nazev, test_udalost, test_znacka, test_soud, test_url)
-                    st.success("✅ Odesláno! Zkontroluj si ten nový e-mail.")
-                except Exception as e:
-                    st.error(f"Chyba při testu: {e}")
-
-menu_options = ["📊 Přehled kauz", "📜 Auditní historie", "⚡ Logy kontrol"]
-if st.session_state['user_role'] in ["Super Admin", "Administrátor"]:
-    menu_options.append("👥 Správa uživatelů")
-
-selected_page = st.sidebar.radio("Menu", menu_options)
-st.sidebar.markdown("---")
 
 # 👇👇👇 SEM VLOŽ TENTO NOVÝ BLOK KÓDU 👇👇👇
 
