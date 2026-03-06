@@ -572,7 +572,7 @@ def stahni_data_z_infosoudu(params):
 
         # Rozšířený slovník pro lidsky čitelné výpisy událostí
         preklad_kodu = {
-            "ZAHAJ_RIZ": "Zahájení řízení / Došlo soudu",
+            "ZAHAJ_RIZ": "Zahájení řízení",
             "VYD_ROZH": "Vydání rozhodnutí",
             "ST_VEC_VYR": "Vyřízení věci",
             "VR_SP_NS": "Vrácení spisu",
