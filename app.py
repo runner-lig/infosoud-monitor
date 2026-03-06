@@ -569,13 +569,24 @@ def stahni_data_z_infosoudu(params):
         # 3. Zpracování a překlad dat
         # Seřadíme pro jistotu podle data a pořadí
         udalosti_raw.sort(key=lambda x: (x.get('datum', ''), x.get('poradi', 0)))
-        
-        # Malý slovník pro hezčí výpisy v e-mailech
+
+        # Rozšířený slovník pro lidsky čitelné výpisy událostí
         preklad_kodu = {
             "ZAHAJ_RIZ": "Zahájení řízení / Došlo soudu",
-            "VYD_ROZH": "Datum vydání rozhodnutí",
+            "VYD_ROZH": "Vydání rozhodnutí",
             "ST_VEC_VYR": "Vyřízení věci",
-            "VR_SP_NS": "Vrácení spisu"
+            "VR_SP_NS": "Vrácení spisu",
+            "VRAC_SPIS": "Vrácení spisu",
+            "NAR_JED": "Nařízení jednání",
+            "DOVOL_RIZ": "Řízení o opravném prostředku na Nejvyšším soudu ČR",
+            "ODES_SPIS": "Odeslání spisu",
+            "ODVOLANI": "Řízení o opravném prostředku u krajského a vrchního soudu",
+            "POD_OP_PR": "Podán opravný prostředek",
+            "ST_VEC_ODS": "Skončení věci",
+            "VYR_OP_PR": "Vyřízení opravného prostředku",
+            "ZRUS_JED": "Zrušení jednání",
+            "ST_VEC_OBZ": "Obživnutí věci",
+            "ST_VEC_PUK": "Datum pravomocného ukončení věci"
         }
         
         udalosti_formatovane = []
