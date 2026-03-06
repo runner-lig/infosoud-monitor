@@ -136,7 +136,7 @@ SOUDY_MAPA = {
     "OSJE": "Okresní soud v Jeseníku", "OSSEMKA": "Okresní soud v Karviné", "OSNJ": "Okresní soud v Novém Jičíně",
     "OSSEMOC": "Okresní soud v Olomouci", "OSSEMOP": "Okresní soud v Opavě", "OSSEMOS": "Okresní soud v Ostravě",
     "OSSEMPR": "Okresní soud v Přerově", "OSSEMSU": "Okresní soud v Šumperku", "OSSEMVS": "Okresní soud ve Vsetíně","OSVYCNA": "Okresní soud Náchod",
-    "OSJIMHO": "Okresní soud Hodonín"
+    "OSJIMHO": "Okresní soud Hodonín", "OSSTCME": "Okresní soud Mělník"
 }
 
 # -------------------------------------------------------------------------
