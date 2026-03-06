@@ -525,10 +525,10 @@ def stahni_data_z_infosoudu(params):
     soud = params.get('soud')
     
     req_params = {
-        'cisloSenatu': params['senat'],
-        'druhVeci': params['druh'],
-        'bcVec': params['cislo'],
-        'rocnik': params['rocnik']
+        'cisloSenatu': params.get('senat', ''),
+        'druhVeci': params.get('druh', ''),
+        'bcVec': params.get('cislo', ''),
+        'rocnik': params.get('rocnik', '')
     }
     
     # Sestavení správných parametrů pro konkrétní typ soudu
@@ -536,6 +536,7 @@ def stahni_data_z_infosoudu(params):
         req_params['typOrganizace'] = 'NEJVYSSI'
     else:
         req_params['typOrganizace'] = 'VSECHNY_KRAJE'
+        # KS, VS a Městský soud v Praze (MSPHAAB funguje jako KS)
         if typ in ['ks', 'vs'] or (soud and soud.startswith(('KS', 'VS', 'MSPHAAB'))):
             req_params['druhOrganizace'] = soud
         else:
@@ -560,17 +561,29 @@ def stahni_data_z_infosoudu(params):
 
         soup = BeautifulSoup(r.text, 'html.parser')
         
+        # Pojistka pro případ, že spis na novém webu neexistuje
         if "Řízení nebylo nalezeno" in soup.text or "Nenalezeno" in soup.text: 
             return None
             
         udalosti = []
         for row in soup.find_all('tr'):
             cols = row.find_all('td')
-            # PŮVODNÍ PARSOVÁNÍ (ZATÍM ZACHOVÁVÁME)
-            if len(cols) >= 2 and re.match(r'^\d{2}\.\d{2}\.\d{4}$', cols[1].get_text(strip=True)):
-                text = cols[0].find('a').get_text(strip=True) if cols[0].find('a') else cols[0].get_text(strip=True)
+            
+            # Kontrola, zda má řádek alespoň 2 sloupce
+            if len(cols) >= 2:
                 datum = cols[1].get_text(strip=True)
-                udalosti.append(f"{datum} - {text}")
+                
+                # Pokud druhý sloupec obsahuje platné datum
+                if re.match(r'^\d{2}\.\d{2}\.\d{4}$', datum):
+                    # Extrakce textu události z prvního sloupce
+                    text = cols[0].get_text(separator=" ", strip=True)
+                    
+                    # Odstranění otravného otazníku z <gov-tooltip>, pokud se načetl
+                    if text.startswith('?'):
+                        text = text[1:].strip()
+                        
+                    udalosti.append(f"{datum} - {text}")
+                    
         return udalosti
         
     except Exception as e:
