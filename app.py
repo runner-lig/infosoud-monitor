@@ -473,14 +473,42 @@ def odeslat_email_notifikaci(nazev, udalost, znacka, soud, url):
 def parsuj_url(url):
     try:
         p = parse_qs(urlparse(url).query)
-        soud = p.get('org', [''])[0] or p.get('krajOrg', [None])[0]
-        typ = p.get('typSoudu', ['os'])[0]
-        if not soud and typ == 'ns': soud = 'NS'
+        
+        # Extrakce kódu soudu ze starých i nových parametrů
+        soud = p.get('org', [None])[0] or p.get('krajOrg', [None])[0] or p.get('okresniSoud', [None])[0] or p.get('druhOrganizace', [None])[0]
+        
+        typ_org = p.get('typOrganizace', [None])[0]
+        typ = p.get('typSoudu', [None])[0]
+        
+        # Specifická logika pro Nejvyšší soud
+        if typ == 'ns' or typ_org == 'NEJVYSSI':
+            typ = 'ns'
+            soud = 'NS'
+            
+        # Dedukce typu soudu z nových parametrů (pokud chybí typSoudu)
+        if soud and not typ:
+            if 'okresniSoud' in p: typ = 'os'
+            elif 'druhOrganizace' in p:
+                if soud.startswith('VS'): typ = 'vs'
+                else: typ = 'ks'
+                
+        # Záchytná síť pro krajské/městské soudy
         if soud and soud.upper().startswith(('KS','MS')): typ = 'ks'
-        return {"typ": typ, "soud": soud, "senat": p.get('cisloSenatu',[None])[0], 
-                "druh": p.get('druhVec',[None])[0].upper() if p.get('druhVec') else None, 
-                "cislo": p.get('bcVec',[p.get('cislo',[None])[0]])[0], "rocnik": p.get('rocnik',[None])[0]}
-    except: return None
+        if not typ: typ = 'os'
+
+        druh = p.get('druhVeci', p.get('druhVec', [None]))[0]
+        if druh: druh = druh.upper()
+
+        return {
+            "typ": typ, 
+            "soud": soud, 
+            "senat": p.get('cisloSenatu',[None])[0], 
+            "druh": druh, 
+            "cislo": p.get('bcVec',[p.get('cislo',[None])[0]])[0], 
+            "rocnik": p.get('rocnik',[None])[0]
+        }
+    except: 
+        return None
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -491,37 +519,54 @@ USER_AGENTS = [
 ]
 
 def stahni_data_z_infosoudu(params):
-    url = "https://infosoud.justice.cz/InfoSoud/public/search.do"
+    url = "https://infosoud.gov.cz/InfoSoud/detail-rizeni"
+    
+    typ = params.get('typ')
+    soud = params.get('soud')
+    
     req_params = {
-        'type': 'spzn', 'typSoudu': params['typ'], 'krajOrg': 'VSECHNY_KRAJE',
-        'org': params['soud'], 'cisloSenatu': params['senat'], 'druhVec': params['druh'],
-        'bcVec': params['cislo'], 'rocnik': params['rocnik'], 'spamQuestion': '23', 'agendaNc': 'CIVIL'
+        'cisloSenatu': params['senat'],
+        'druhVeci': params['druh'],
+        'bcVec': params['cislo'],
+        'rocnik': params['rocnik']
     }
     
+    # Sestavení správných parametrů pro konkrétní typ soudu
+    if typ == 'ns' or soud == 'NS':
+        req_params['typOrganizace'] = 'NEJVYSSI'
+    else:
+        req_params['typOrganizace'] = 'VSECHNY_KRAJE'
+        if typ in ['ks', 'vs'] or (soud and soud.startswith(('KS', 'VS', 'MSPHAAB'))):
+            req_params['druhOrganizace'] = soud
+        else:
+            req_params['okresniSoud'] = soud
+            
     agent = random.choice(USER_AGENTS)
     headers = {
         "User-Agent": agent,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "cs,en-US;q=0.7,en;q=0.3",
-        "Referer": "https://infosoud.justice.cz/InfoSoud/public/search.do",
+        "Referer": "https://infosoud.gov.cz/",
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1"
     }
     
     try:
         r = requests.get(url, params=req_params, headers=headers, timeout=10)
+        
         if "recaptcha" in r.text.lower() or "spam" in r.text.lower():
             print("⚠️ POZOR: Infosoud vrátil podezření na robota (Captcha).")
             return None
 
         soup = BeautifulSoup(r.text, 'html.parser')
         
-        if "Řízení nebylo nalezeno" in soup.text: 
+        if "Řízení nebylo nalezeno" in soup.text or "Nenalezeno" in soup.text: 
             return None
             
         udalosti = []
         for row in soup.find_all('tr'):
             cols = row.find_all('td')
+            # PŮVODNÍ PARSOVÁNÍ (ZATÍM ZACHOVÁVÁME)
             if len(cols) >= 2 and re.match(r'^\d{2}\.\d{2}\.\d{4}$', cols[1].get_text(strip=True)):
                 text = cols[0].find('a').get_text(strip=True) if cols[0].find('a') else cols[0].get_text(strip=True)
                 datum = cols[1].get_text(strip=True)
