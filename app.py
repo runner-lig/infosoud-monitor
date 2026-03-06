@@ -137,6 +137,7 @@ SOUDY_MAPA = {
     "OSSEMOC": "Okresní soud v Olomouci", "OSSEMOP": "Okresní soud v Opavě", "OSSEMOS": "Okresní soud v Ostravě",
     "OSSEMPR": "Okresní soud v Přerově", "OSSEMSU": "Okresní soud v Šumperku", "OSSEMVS": "Okresní soud ve Vsetíně","OSVYCNA": "Okresní soud Náchod",
     "OSJIMHO": "Okresní soud Hodonín", "OSSTCME": "Okresní soud Mělník", "OSJICCK" : "Okresní soud Český Krumlov", "OSVYCJC" : "Okresní soud Jičín",
+    "OSSCECL": "Okresní soud Česká Lípa"
 }
 
 # -------------------------------------------------------------------------
